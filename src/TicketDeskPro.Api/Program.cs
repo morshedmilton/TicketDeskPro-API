@@ -1,29 +1,98 @@
+using System.Text;
+using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi;
+using TicketDeskPro.Api.Middleware;
+using TicketDeskPro.Api.Services;
+using TicketDeskPro.Application;
+using TicketDeskPro.Application.Interfaces;
+using TicketDeskPro.Application.Options;
 using TicketDeskPro.Infrastructure;
 using TicketDeskPro.Infrastructure.Data;
 using TicketDeskPro.Infrastructure.Data.Seed;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddOpenApi();
+// --- Configuration (fail fast on bad security config) ---
+var jwtSection = builder.Configuration.GetSection(JwtSettings.SectionName);
+var jwtSecret = jwtSection["Secret"]
+    ?? throw new InvalidOperationException("JwtSettings:Secret is missing. See .env.example / README.");
+
+// --- Services ---
+builder.Services.AddApplication(builder.Configuration);
 builder.Services.AddInfrastructure(builder.Configuration);
+
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.MapInboundClaims = false; // we emit/consume literal claim names: sub, email, role, permission
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = jwtSection["Issuer"],
+            ValidateAudience = true,
+            ValidAudience = jwtSection["Audience"],
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromMinutes(1),
+            RoleClaimType = "role",
+            NameClaimType = "sub"
+        };
+    });
+builder.Services.AddAuthorization();
+
+builder.Services.AddControllers().AddJsonOptions(o =>
+    o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo { Title = "TicketDesk Pro API", Version = "v1" });
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Paste the accessToken from POST /api/v1/auth/login (no 'Bearer ' prefix needed)."
+    });
+    options.AddSecurityRequirement(_ => new OpenApiSecurityRequirement
+    {
+        { new OpenApiSecuritySchemeReference("Bearer", null), new List<string>() }
+    });
+});
 
 var app = builder.Build();
 
-// Apply migrations + seed baseline data on startup (dev convenience; replaced by
-// explicit migration step in the Render deploy pipeline in Phase 8).
+// --- Database: migrate + seed on startup (replaced by explicit step in the Render pipeline, Phase 8) ---
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await db.Database.MigrateAsync();
-    await DbSeeder.SeedAsync(db);
+    await DbSeeder.SeedAsync(db, includeDemoUsers: app.Environment.IsDevelopment());
 }
+
+// --- Pipeline (order matters: correlation first so even errors carry the id) ---
+app.UseMiddleware<CorrelationIdMiddleware>();
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.UseSwagger();
+    app.UseSwaggerUI();
 }
 
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers();
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", time = DateTime.UtcNow }));
 
 app.Run();
