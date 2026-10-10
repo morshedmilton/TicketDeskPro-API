@@ -1,0 +1,30 @@
+# .NET
+bin/
+obj/
+publish/
+*.user
+*.suo
+*.swp
+
+# IDE
+.vs/
+.idea/
+.vscode/*
+!.vscode/settings.json
+
+# Environment / secrets
+.env
+appsettings.Development.json
+appsettings.*.local.json
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test results
+TestResults/
+coverage/
