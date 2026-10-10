@@ -10,8 +10,10 @@ namespace TicketDeskPro.Infrastructure.Data.Seed;
 /// </summary>
 public static class DbSeeder
 {
-    public static async Task SeedAsync(AppDbContext db, CancellationToken ct = default)
+    public static async Task SeedAsync(AppDbContext db, bool includeDemoUsers, CancellationToken ct = default)
     {
+        // Baseline (roles, permissions, SLA policies, categories) is seeded everywhere.
+        // Demo users with a known password are DEVELOPMENT ONLY — never in production (audit fix).
         if (await db.Users.AnyAsync(ct))
             return;
 
@@ -64,6 +66,8 @@ public static class DbSeeder
         var passwordHash = BCrypt.Net.BCrypt.HashPassword(SeedDefinitions.DemoPassword);
         foreach (var (id, email, firstName, lastName, roleName) in SeedDefinitions.Users)
         {
+            if (!includeDemoUsers) break;
+
             var user = new User
             {
                 Id = id,
