@@ -23,5 +23,11 @@ public class RefreshToken : BaseEntity
 
     public string? CreatedByIp { get; set; }
 
+    /// <summary>
+    /// Optimistic concurrency: rotation does revoke+replace guarded by this token,
+    /// so two parallel refreshes with the same token cannot both succeed (one gets 401).
+    /// </summary>
+    public uint Xmin { get; set; }
+
     public bool IsActive => RevokedAt is null && DateTime.UtcNow < ExpiresAt;
 }

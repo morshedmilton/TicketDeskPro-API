@@ -92,6 +92,7 @@ public class AppDbContext : DbContext
             builder.Property(u => u.FirstName).HasMaxLength(100).IsRequired();
             builder.Property(u => u.LastName).HasMaxLength(100).IsRequired();
             builder.Property(u => u.Phone).HasMaxLength(30);
+            builder.Property(u => u.PasswordResetTokenHash).HasMaxLength(128);
 
             // BRD/DB Design §3: unique email among non-deleted users.
             builder.HasIndex(u => u.Email).IsUnique()
@@ -136,6 +137,13 @@ public class AppDbContext : DbContext
             builder.Property(t => t.TokenHash).HasMaxLength(128).IsRequired();
             builder.HasIndex(t => t.TokenHash).IsUnique();
             builder.HasIndex(t => t.FamilyId);
+
+            // Rotation safety: conditional UPDATE via xmin — parallel reuse of the same
+            // refresh token raises DbUpdateConcurrencyException for the loser.
+            builder.Property(t => t.Xmin)
+                .HasColumnName("xmin")
+                .ValueGeneratedOnAddOrUpdate()
+                .IsRowVersion();
             builder.HasOne(t => t.User).WithMany(u => u.RefreshTokens)
                 .HasForeignKey(t => t.UserId).OnDelete(DeleteBehavior.Cascade);
         });
