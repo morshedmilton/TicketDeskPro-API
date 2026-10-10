@@ -28,3 +28,6 @@ Thumbs.db
 # Test results
 TestResults/
 coverage/
+
+# Private working docs — never push to GitHub
+brain/
