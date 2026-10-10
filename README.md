@@ -33,21 +33,23 @@ erDiagram
     PERMISSIONS ||--o{ ROLE_PERMISSIONS : "maps to"
 
     USERS ||--o{ TICKETS : "creates"
-    USERS }o--o{ TICKETS : "assigned"
+    USERS |o--o{ TICKETS : "assigned"
     CATEGORIES ||--o{ TICKETS : "groups"
+    USERS ||--o{ TICKET_MESSAGES : "authors"
     TICKETS ||--o{ TICKET_MESSAGES : "contains"
+    USERS ||--o{ TICKET_ATTACHMENTS : "uploads"
     TICKETS ||--o{ TICKET_ATTACHMENTS : "has"
+    USERS ||--o{ TICKET_STATUS_HISTORY : "records"
     TICKETS ||--o{ TICKET_STATUS_HISTORY : "tracked by"
     TICKETS ||--o{ TICKET_TAGS : "tagged"
     TAGS ||--o{ TICKET_TAGS : "applied to"
-    TICKETS ||--|| SLA_TIMERS : "monitored by"
+    TICKETS o|--|| SLA_TIMERS : "monitored by"
     SLA_POLICIES ||--o{ SLA_TIMERS : "defines"
 
     USERS ||--o{ REFRESH_TOKENS : "holds"
-    USERS ||--o{ LOGIN_ATTEMPTS : "generates"
-    USERS ||--o{ AUDIT_LOGS : "performs"
+    USERS o|--|| NOTIFICATION_PREFERENCES : "configures"
+    USERS |o--o{ AUDIT_LOGS : "performs"
     USERS ||--o{ NOTIFICATIONS : "receives"
-    USERS ||--|| NOTIFICATION_PREFERENCES : "configures"
 
     USERS {
         uuid id PK
@@ -131,12 +133,12 @@ erDiagram
     }
     SLA_TIMERS {
         uuid id PK
-        uuid ticket_id UK
+        uuid ticket_id FK
         uuid sla_policy_id FK
         timestamp first_response_deadline
         timestamp resolution_deadline
-        bool first_response_breached
-        bool resolution_breached
+        bool is_first_response_breached
+        bool is_resolution_breached
     }
     REFRESH_TOKENS {
         uuid id PK
@@ -160,6 +162,7 @@ erDiagram
         varchar entity_id
         text before_json
         text after_json
+        datetime timestamp
     }
     NOTIFICATIONS {
         uuid id PK
@@ -178,7 +181,7 @@ erDiagram
     }
     NOTIFICATION_PREFERENCES {
         uuid id PK
-        uuid user_id UK
+        uuid user_id FK
         bool email_on_ticket_created
         bool email_on_status_changed
         bool in_app_enabled
@@ -199,7 +202,7 @@ erDiagram
 
 <br>
 
-<sub>Every table also carries `id`, `created_at`, `updated_at` and soft-delete columns (`is_deleted`, `deleted_at`) from `BaseEntity` — omitted above for readability.</sub>
+<sub>Notes: every table also carries `id`, `created_at`, `updated_at` and soft-delete columns (`is_deleted`, `deleted_at`, `deleted_by`) from `BaseEntity` — except the three join tables (composite keys) and `audit_logs` (append-only by design). `EMAIL_OUTBOX` and `LOGIN_ATTEMPTS` intentionally have **no foreign keys** — they address users by email string, which is why they float free above.</sub>
 
 ## Prerequisites
 
