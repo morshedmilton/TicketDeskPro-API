@@ -6,4 +6,7 @@
     <Project Path="src/TicketDeskPro.Infrastructure/TicketDeskPro.Infrastructure.csproj" />
     <Project Path="src/TicketDeskPro.Shared/TicketDeskPro.Shared.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TicketDeskPro.UnitTests/TicketDeskPro.UnitTests.csproj" />
+  </Folder>
 </Solution>
