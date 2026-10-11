@@ -12,6 +12,7 @@ public interface ITicketService
     Task DeleteAsync(Guid id, CancellationToken ct = default);
     Task<TicketDetailDto> RestoreAsync(Guid id, CancellationToken ct = default);
     Task<TicketDetailDto> ChangeStatusAsync(Guid id, TicketStatusChangeRequest request, uint? ifMatch, CancellationToken ct = default);
+    Task<TicketDetailDto> AssignAsync(Guid id, TicketAssignRequest request, uint? ifMatch, CancellationToken ct = default);
 
     Task<MessageListResponse> GetMessagesAsync(Guid ticketId, int limit, string? cursor, CancellationToken ct = default);
     Task<TicketMessageDto> AddMessageAsync(Guid ticketId, TicketMessageCreateRequest request, CancellationToken ct = default);
