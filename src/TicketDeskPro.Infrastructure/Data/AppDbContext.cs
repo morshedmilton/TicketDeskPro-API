@@ -171,7 +171,8 @@ public class AppDbContext : DbContext
         {
             builder.Property(r => r.Name).HasMaxLength(50).IsRequired();
             builder.Property(r => r.Description).HasMaxLength(200);
-            builder.HasIndex(r => r.Name).IsUnique();
+            builder.HasIndex(r => r.Name).IsUnique()
+                .HasFilter("\"IsDeleted\" = FALSE");
         });
 
         modelBuilder.Entity<Permission>(builder =>
@@ -304,13 +305,15 @@ public class AppDbContext : DbContext
         {
             builder.Property(c => c.Name).HasMaxLength(100).IsRequired();
             builder.Property(c => c.Description).HasMaxLength(500);
-            builder.HasIndex(c => c.Name).IsUnique();
+            builder.HasIndex(c => c.Name).IsUnique()
+                .HasFilter("\"IsDeleted\" = FALSE");
         });
 
         modelBuilder.Entity<Tag>(builder =>
         {
             builder.Property(t => t.Name).HasMaxLength(50).IsRequired();
-            builder.HasIndex(t => t.Name).IsUnique();
+            builder.HasIndex(t => t.Name).IsUnique()
+                .HasFilter("\"IsDeleted\" = FALSE");
         });
     }
 
