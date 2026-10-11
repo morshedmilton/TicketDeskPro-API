@@ -1,0 +1,280 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using TicketDeskPro.Infrastructure.Data;
+using Xunit;
+
+namespace TicketDeskPro.IntegrationTests;
+
+public class TicketApiTests : IClassFixture<TicketApiFactory>
+{
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private readonly TicketApiFactory _factory;
+
+    public TicketApiTests(TicketApiFactory factory) => _factory = factory;
+
+    private async Task<HttpClient> ClientForAsync(string email)
+    {
+        var client = _factory.CreateClient();
+        var token = await _factory.TokenForAsync(email);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
+    private static async Task<(JsonElement Data, string? ETag)> ReadAsync(HttpResponseMessage response)
+    {
+        var doc = await response.Content.ReadFromJsonAsync<JsonElement>(Json);
+        return (doc.GetProperty("data"), response.Headers.ETag?.Tag?.Trim('"'));
+    }
+
+    private async Task<(string Id, string Number, string? ETag)> CreateTicketAsync(HttpClient client, string title = "Cannot login to dashboard", string priority = "High")
+    {
+        var categories = await GetCategoriesAsync(client);
+        var response = await client.PostAsJsonAsync("/api/v1/tickets", new
+        {
+            title,
+            description = "I receive a 500 error when logging in to the admin dashboard.",
+            priority,
+            categoryId = categories
+        }, Json);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var (data, etag) = await ReadAsync(response);
+        return (data.GetProperty("id").GetString()!, data.GetProperty("ticketNumber").GetString()!, etag);
+    }
+
+    private async Task<string> GetCategoriesAsync(HttpClient client)
+    {
+        // Categories are seeded; read one via the db scope (no public endpoint yet — Phase 5 admin).
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return (await db.Categories.FirstAsync()).Id.ToString();
+    }
+
+    // ---------------- tests ----------------
+
+    [Fact]
+    public async Task Create_returns_201_with_TKT_number_and_etag()
+    {
+        var client = await ClientForAsync("customer@ticketdesk.dev");
+        var (id, number, etag) = await CreateTicketAsync(client);
+
+        Assert.Matches(@"^TKT-\d{4}$", number);   // BR-006
+        Assert.False(string.IsNullOrEmpty(id));
+        Assert.False(string.IsNullOrEmpty(etag));
+    }
+
+    [Fact]
+    public async Task Customer_sees_only_own_tickets_agent_sees_all()
+    {
+        var customer = await ClientForAsync("customer@ticketdesk.dev");
+        var agent = await ClientForAsync("agent@ticketdesk.dev");
+        await CreateTicketAsync(customer, "My private problem");
+
+        var customerList = await customer.GetFromJsonAsync<JsonElement>("/api/v1/tickets", Json);
+        var agentList = await agent.GetFromJsonAsync<JsonElement>("/api/v1/tickets", Json);
+
+        var customerItems = customerList.GetProperty("data").GetProperty("items");
+        Assert.All(customerItems.EnumerateArray(), item =>
+            Assert.Equal("Sarah Jenkins", item.GetProperty("createdByName").GetString())); // BR-022: own tickets only
+
+        // agent sees at least what the customer sees, plus seeded-era tickets from other tests
+        Assert.True(agentList.GetProperty("data").GetProperty("items").GetArrayLength() >= customerItems.GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Cursor_pagination_walks_pages_without_overlap()
+    {
+        var client = await ClientForAsync("agent@ticketdesk.dev");
+        for (var i = 0; i < 3; i++)
+            await CreateTicketAsync(client, $"Pagination ticket number {i}");
+
+        var page1 = await client.GetFromJsonAsync<JsonElement>("/api/v1/tickets?limit=2", Json);
+        var items1 = page1.GetProperty("data").GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetString()).ToList();
+        var cursor = page1.GetProperty("data").GetProperty("nextCursor").GetString();
+        Assert.True(page1.GetProperty("data").GetProperty("hasMore").GetBoolean());
+        Assert.NotNull(cursor);
+
+        var page2 = await client.GetFromJsonAsync<JsonElement>($"/api/v1/tickets?limit=2&cursor={Uri.EscapeDataString(cursor!)}", Json);
+        var items2 = page2.GetProperty("data").GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetString()).ToList();
+
+        Assert.Empty(items1.Intersect(items2)); // no overlap between pages
+    }
+
+    [Fact]
+    public async Task Stale_If_Match_returns_409_concurrency_conflict()
+    {
+        var client = await ClientForAsync("agent@ticketdesk.dev");
+        var (id, _, etag) = await CreateTicketAsync(client);
+
+        // First update with the current ETag succeeds.
+        var first = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/tickets/{id}")
+        {
+            Content = JsonContent.Create(new { title = "Updated title one", description = "Still a long enough description.", priority = "High", categoryId = await GetCategoriesAsync(client) }, options: Json)
+        };
+        first.Headers.IfMatch.Add(new EntityTagHeaderValue($"\"{etag}\""));
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(first)).StatusCode);
+
+        // A mismatched ETag must conflict (CPL_004). The InMemory provider cannot simulate
+        // xmin bumps (postgres-only), so we assert the mismatch path here; the true
+        // stale-etag-after-update flow is covered by the live E2E run against PostgreSQL.
+        var second = new HttpRequestMessage(HttpMethod.Patch, $"/api/v1/tickets/{id}")
+        {
+            Content = JsonContent.Create(new { title = "Updated title two", description = "Still a long enough description.", priority = "High", categoryId = await GetCategoriesAsync(client) }, options: Json)
+        };
+        second.Headers.IfMatch.Add(new EntityTagHeaderValue("\"999999\""));
+        var response = await client.SendAsync(second);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(Json);
+        Assert.Equal("CPL_004", body.GetProperty("errors")[0].GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task Invalid_state_transition_returns_409()
+    {
+        var client = await ClientForAsync("agent@ticketdesk.dev");
+        var (id, _, _) = await CreateTicketAsync(client);
+
+        var response = await client.PatchAsJsonAsync($"/api/v1/tickets/{id}/status", new { status = "Resolved" }, Json);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(Json);
+        Assert.Equal("CPL_002", body.GetProperty("errors")[0].GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task Open_to_InProgress_happy_path_then_customer_cannot_force_close()
+    {
+        var agent = await ClientForAsync("agent@ticketdesk.dev");
+        var customer = await ClientForAsync("customer@ticketdesk.dev");
+        var (id, _, _) = await CreateTicketAsync(customer); // customer owns it → may view
+
+        var move = await agent.PatchAsJsonAsync($"/api/v1/tickets/{id}/status", new { status = "InProgress" }, Json);
+        Assert.Equal(HttpStatusCode.OK, move.StatusCode);
+
+        // owner but customer role lacks tickets.delete → cannot force-close from any state
+        var forceClose = await customer.PatchAsJsonAsync($"/api/v1/tickets/{id}/status", new { status = "Closed" }, Json);
+        Assert.Equal(HttpStatusCode.Forbidden, forceClose.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_force_closes_an_open_ticket()
+    {
+        var admin = await ClientForAsync("admin@ticketdesk.dev");
+        var customer = await ClientForAsync("customer@ticketdesk.dev");
+        var (id, _, _) = await CreateTicketAsync(customer);
+
+        var response = await admin.PatchAsJsonAsync($"/api/v1/tickets/{id}/status", new { status = "Closed", reason = "Duplicate" }, Json);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Internal_notes_are_agent_only_and_invisible_to_customers()
+    {
+        var agent = await ClientForAsync("agent@ticketdesk.dev");
+        var customer = await ClientForAsync("customer@ticketdesk.dev");
+        var (id, _, _) = await CreateTicketAsync(customer);
+
+        // agent posts an internal note
+        var note = await agent.PostAsJsonAsync($"/api/v1/tickets/{id}/messages", new { content = "Internal investigation note", isInternal = true }, Json);
+        Assert.Equal(HttpStatusCode.Created, note.StatusCode);
+
+        // customer posting an internal note is forbidden
+        var customerNote = await customer.PostAsJsonAsync($"/api/v1/tickets/{id}/messages", new { content = "sneaky", isInternal = true }, Json);
+        Assert.Equal(HttpStatusCode.Forbidden, customerNote.StatusCode);
+
+        // the note is hidden from the customer's thread
+        var customerThread = await customer.GetFromJsonAsync<JsonElement>($"/api/v1/tickets/{id}/messages", Json);
+        Assert.Empty(customerThread.GetProperty("data").GetProperty("items").EnumerateArray().Where(m => m.GetProperty("isInternal").GetBoolean()));
+
+        // but visible to the agent
+        var agentThread = await agent.GetFromJsonAsync<JsonElement>($"/api/v1/tickets/{id}/messages", Json);
+        Assert.Contains(agentThread.GetProperty("data").GetProperty("items").EnumerateArray(), m => m.GetProperty("isInternal").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Attachment_upload_download_delete_roundtrip()
+    {
+        var client = await ClientForAsync("customer@ticketdesk.dev");
+        var (id, _, _) = await CreateTicketAsync(client);
+
+        var form = new MultipartFormDataContent
+        {
+            { new ByteArrayContent("hello attachment"u8.ToArray()), "file", "notes.txt" }
+        };
+        var upload = await client.PostAsync($"/api/v1/tickets/{id}/attachments", form);
+        Assert.Equal(HttpStatusCode.Created, upload.StatusCode);
+        var (attachment, _) = await ReadAsync(upload);
+        var attachmentId = attachment.GetProperty("id").GetString()!;
+
+        var download = await client.GetAsync($"/api/v1/tickets/{id}/attachments/{attachmentId}/download");
+        Assert.Equal(HttpStatusCode.OK, download.StatusCode);
+        Assert.Equal("hello attachment", await download.Content.ReadAsStringAsync());
+
+        var delete = await client.DeleteAsync($"/api/v1/tickets/{id}/attachments/{attachmentId}");
+        Assert.Equal(HttpStatusCode.OK, delete.StatusCode);
+    }
+
+    [Fact]
+    public async Task Attachment_delete_blocked_after_resolution()
+    {
+        var agent = await ClientForAsync("agent@ticketdesk.dev");
+        var customer = await ClientForAsync("customer@ticketdesk.dev");
+        var (id, _, _) = await CreateTicketAsync(customer);
+
+        var form = new MultipartFormDataContent { { new ByteArrayContent("x"u8.ToArray()), "file", "shot.png" } };
+        var upload = await customer.PostAsync($"/api/v1/tickets/{id}/attachments", form);
+        var (attachment, _) = await ReadAsync(upload);
+        var attachmentId = attachment.GetProperty("id").GetString()!;
+
+        await agent.PatchAsJsonAsync($"/api/v1/tickets/{id}/status", new { status = "InProgress" }, Json);
+        await agent.PatchAsJsonAsync($"/api/v1/tickets/{id}/status", new { status = "Resolved" }, Json);
+
+        var delete = await customer.DeleteAsync($"/api/v1/tickets/{id}/attachments/{attachmentId}");
+        Assert.Equal(HttpStatusCode.Conflict, delete.StatusCode); // BR-026
+    }
+
+    [Fact]
+    public async Task Admin_soft_deletes_then_restores_a_ticket()
+    {
+        var admin = await ClientForAsync("admin@ticketdesk.dev");
+        var customer = await ClientForAsync("customer@ticketdesk.dev");
+        var (id, _, _) = await CreateTicketAsync(customer);
+
+        var delete = await admin.DeleteAsync($"/api/v1/tickets/{id}");
+        Assert.Equal(HttpStatusCode.OK, delete.StatusCode);
+
+        // gone for the customer
+        Assert.Equal(HttpStatusCode.NotFound, (await customer.GetAsync($"/api/v1/tickets/{id}")).StatusCode);
+
+        // soft-delete actually flagged the row (not removed) + audit captured the delete
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await db.Tickets.IgnoreQueryFilters().SingleAsync(t => t.Id == Guid.Parse(id));
+        Assert.True(row.IsDeleted);
+        Assert.Contains(await db.AuditLogs.IgnoreQueryFilters().ToListAsync(), a => a.EntityType == "Ticket" && a.Action == "Delete");
+
+        var restore = await admin.PostAsync($"/api/v1/tickets/{id}/restore", null);
+        Assert.Equal(HttpStatusCode.OK, restore.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await customer.GetAsync($"/api/v1/tickets/{id}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Ticket_create_writes_an_audit_log_row()
+    {
+        var client = await ClientForAsync("customer@ticketdesk.dev");
+        var (id, _, _) = await CreateTicketAsync(client);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var log = await db.AuditLogs.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(a => a.EntityType == "Ticket" && a.Action == "Create" && a.EntityId == id);
+
+        Assert.NotNull(log);
+        Assert.NotNull(log!.AfterJson); // BR-023 after-snapshot
+        Assert.Contains("Cannot login", log!.AfterJson);
+    }
+}
