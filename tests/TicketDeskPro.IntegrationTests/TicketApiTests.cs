@@ -394,4 +394,182 @@ public class TicketApiTests : IClassFixture<TicketApiFactory>
         Assert.Contains(await db.Notifications.IgnoreQueryFilters().ToListAsync(),
             n => n.UserId == ticket.AssignedToId && n.Type == Domain.Enums.NotificationType.TicketAssigned);
     }
+
+    // ---------------- Phase 5: dashboard, admin, audit, preferences, health ----------------
+
+    [Fact]
+    public async Task Dashboard_kpis_returns_expected_shape_for_admin()
+    {
+        var admin = await ClientForAsync("admin@ticketdesk.dev");
+        var kpis = await admin.GetFromJsonAsync<JsonElement>("/api/v1/dashboard/kpis", Json);
+        var data = kpis.GetProperty("data");
+        Assert.True(data.GetProperty("openByPriority").GetProperty("total").GetInt32() >= 0);
+        Assert.True(data.GetProperty("slaComplianceRate7Days").GetDouble() >= 0);
+
+        // the other dashboard views answer too
+        Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("/api/v1/dashboard/ticket-trends?days=14")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("/api/v1/dashboard/category-distribution")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("/api/v1/dashboard/agent-performance")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Customer_cannot_read_dashboard()
+    {
+        var customer = await ClientForAsync("customer@ticketdesk.dev");
+        Assert.Equal(HttpStatusCode.Forbidden, (await customer.GetAsync("/api/v1/dashboard/kpis")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_user_management_crud_with_superadmin_guards()
+    {
+        var admin = await ClientForAsync("admin@ticketdesk.dev");
+        var superadmin = await ClientForAsync("superadmin@ticketdesk.dev");
+
+        // create
+        var create = await admin.PostAsJsonAsync("/api/v1/users", new
+        {
+            email = "newguy@ticketdesk.dev", password = "StrongPass1!", firstName = "New", lastName = "Guy",
+            phone = (string?)null, roles = new[] { "Agent" }
+        }, Json);
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var (user, _) = await ReadAsync(create);
+        var userId = user.GetProperty("id").GetString()!;
+
+        // duplicate email conflicts
+        Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsJsonAsync("/api/v1/users", new
+        {
+            email = "newguy@ticketdesk.dev", password = "StrongPass1!", firstName = "New", lastName = "Guy",
+            phone = (string?)null, roles = new[] { "Agent" }
+        }, Json)).StatusCode);
+
+        // list + search
+        var list = await admin.GetFromJsonAsync<JsonElement>("/api/v1/users?search=newguy", Json);
+        Assert.Contains(list.GetProperty("data").GetProperty("items").EnumerateArray(),
+            u => u.GetProperty("email").GetString() == "newguy@ticketdesk.dev");
+
+        // deactivate
+        var patch = await admin.PatchAsJsonAsync($"/api/v1/users/{userId}",
+            new { firstName = "New", lastName = "Guy2", phone = (string?)null, isActive = false, roles = (IReadOnlyList<string>?)null }, Json);
+        Assert.Equal(HttpStatusCode.OK, patch.StatusCode);
+
+        // agent cannot manage users
+        var agent = await ClientForAsync("agent@ticketdesk.dev");
+        Assert.Equal(HttpStatusCode.Forbidden, (await agent.PatchAsJsonAsync($"/api/v1/users/{userId}",
+            new { firstName = "X", lastName = "Y", phone = (string?)null, isActive = true, roles = (IReadOnlyList<string>?)null }, Json)).StatusCode);
+
+        // BR-38: deleting a SuperAdmin is blocked even for admin; superadmin CAN deactivate a superadmin? admin cannot deactivate superadmin either
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var saId = (await db.Users.FirstAsync(u => u.Email == "superadmin@ticketdesk.dev")).Id;
+            Assert.Equal(HttpStatusCode.Conflict, (await admin.DeleteAsync($"/api/v1/users/{saId}")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await admin.PatchAsJsonAsync($"/api/v1/users/{saId}",
+                new { firstName = "Super", lastName = "Admin", phone = (string?)null, isActive = false, roles = (IReadOnlyList<string>?)null }, Json)).StatusCode);
+            // a SuperAdmin deactivating their OWN account is blocked by the self-guard
+            Assert.Equal(HttpStatusCode.Conflict, (await superadmin.PatchAsJsonAsync($"/api/v1/users/{saId}",
+                new { firstName = "Super", lastName = "Admin", phone = (string?)null, isActive = false, roles = (IReadOnlyList<string>?)null }, Json)).StatusCode);
+        }
+
+        // soft delete + restore
+        Assert.Equal(HttpStatusCode.OK, (await admin.DeleteAsync($"/api/v1/users/{userId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/v1/users/{userId}/restore", null)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Superadmin_role_management_with_system_role_lock()
+    {
+        var admin = await ClientForAsync("admin@ticketdesk.dev");
+        var superadmin = await ClientForAsync("superadmin@ticketdesk.dev");
+
+        // admin lacks roles.manage
+        Assert.Equal(HttpStatusCode.Forbidden, (await admin.PostAsJsonAsync("/api/v1/admin/roles",
+            new { name = "Nope", description = (string?)null, permissionIds = new[] { Guid.NewGuid() } }, Json)).StatusCode);
+
+        // permissions catalog is readable
+        var perms = await superadmin.GetFromJsonAsync<JsonElement>("/api/v1/admin/roles/permissions", Json);
+        Assert.True(perms.GetProperty("data").GetArrayLength() >= 24);
+
+        var permId = perms.GetProperty("data")[0].GetProperty("id").GetString()!;
+
+        // create custom role
+        var create = await superadmin.PostAsJsonAsync("/api/v1/admin/roles",
+            new { name = "Billing Agent", description = "Handles invoices", permissionIds = new[] { permId } }, Json);
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var (role, _) = await ReadAsync(create);
+        var roleId = role.GetProperty("id").GetString()!;
+
+        // update + delete it
+        Assert.Equal(HttpStatusCode.OK, (await superadmin.PutAsJsonAsync($"/api/v1/admin/roles/{roleId}",
+            new { name = "Billing Specialist", description = "Handles invoices", permissionIds = new[] { permId } }, Json)).StatusCode);
+
+        // system roles are locked
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var agentRoleId = (await db.Roles.FirstAsync(r => r.Name == "Agent")).Id.ToString();
+            Assert.Equal(HttpStatusCode.Conflict, (await superadmin.DeleteAsync($"/api/v1/admin/roles/{agentRoleId}")).StatusCode);
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await superadmin.DeleteAsync($"/api/v1/admin/roles/{roleId}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Category_and_tag_management_roundtrip()
+    {
+        var admin = await ClientForAsync("admin@ticketdesk.dev");
+
+        var cat = await admin.PostAsJsonAsync("/api/v1/categories",
+            new { name = "Hardware", description = "Device issues" }, Json);
+        Assert.Equal(HttpStatusCode.Created, cat.StatusCode);
+        var (category, _) = await ReadAsync(cat);
+        var catId = category.GetProperty("id").GetString()!;
+
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync($"/api/v1/categories/{catId}",
+            new { name = "Hardware", description = "Device issues", isActive = false }, Json)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.DeleteAsync($"/api/v1/categories/{catId}")).StatusCode);
+
+        var tag = await admin.PostAsJsonAsync("/api/v1/tags", new { name = "vip-customer" }, Json);
+        Assert.Equal(HttpStatusCode.Created, tag.StatusCode);
+        var (createdTag, _) = await ReadAsync(tag);
+        Assert.Equal(HttpStatusCode.OK, (await admin.DeleteAsync($"/api/v1/tags/{createdTag.GetProperty("id").GetString()!}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Audit_log_viewer_filters_and_requires_permission()
+    {
+        var admin = await ClientForAsync("admin@ticketdesk.dev");
+        var customer = await ClientForAsync("customer@ticketdesk.dev");
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await customer.GetAsync("/api/v1/audit-logs")).StatusCode);
+
+        var logs = await admin.GetFromJsonAsync<JsonElement>("/api/v1/audit-logs?entityType=Ticket&limit=5", Json);
+        var items = logs.GetProperty("data").GetProperty("items");
+        Assert.All(items.EnumerateArray(), row => Assert.Equal("Ticket", row.GetProperty("entityType").GetString()));
+        Assert.True(items.GetArrayLength() <= 5);
+    }
+
+    [Fact]
+    public async Task Notification_preferences_roundtrip()
+    {
+        var agent = await ClientForAsync("agent@ticketdesk.dev");
+
+        var current = await agent.GetFromJsonAsync<JsonElement>("/api/v1/notifications/preferences", Json);
+        Assert.True(current.GetProperty("data").GetProperty("inAppEnabled").GetBoolean());
+
+        var updated = await agent.PutAsJsonAsync("/api/v1/notifications/preferences",
+            new { emailOnTicketCreated = false, emailOnTicketAssigned = true, emailOnStatusChanged = true, emailOnSlaWarning = true, inAppEnabled = true }, Json);
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+
+        var reread = await agent.GetFromJsonAsync<JsonElement>("/api/v1/notifications/preferences", Json);
+        Assert.False(reread.GetProperty("data").GetProperty("emailOnTicketCreated").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Health_endpoints_behave()
+    {
+        var anon = _factory.CreateClient();
+        Assert.Equal(HttpStatusCode.OK, (await anon.GetAsync("/api/v1/healthz")).StatusCode);
+        // InMemory + no Redis: readiness must report degraded (503)
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await anon.GetAsync("/api/v1/readyz")).StatusCode);
+    }
 }
