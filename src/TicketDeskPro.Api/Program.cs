@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Serilog;
 using Microsoft.OpenApi;
 using TicketDeskPro.Api.Middleware;
 using TicketDeskPro.Api.Services;
@@ -14,6 +15,13 @@ using TicketDeskPro.Infrastructure.Data;
 using TicketDeskPro.Infrastructure.Data.Seed;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Structured logging (FRD §10): Serilog with JSON-ish file sink for prod,
+// console for dev; CorrelationId enriched per request by the middleware.
+builder.Host.UseSerilog((context, config) => config
+    .ReadFrom.Configuration(context.Configuration)
+    .Enrich.FromLogContext()
+    .Enrich.WithProperty("Application", "TicketDeskPro-API"));
 
 // --- Configuration (fail fast on bad security config) ---
 var jwtSection = builder.Configuration.GetSection(JwtSettings.SectionName);
