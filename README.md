@@ -585,7 +585,7 @@ erDiagram
 | 3 | Ticket CRUD, state machine, messages, attachments, audit | ✅ Shipped |
 | 4 | SLA engine + notifications (Outbox, SignalR) | ✅ Shipped |
 | 5 | Dashboards & analytics (Redis KPIs, admin panel, health checks) | ✅ Shipped — backend complete |
-| 6 | Frontend auth & layout (`TicketDeskPro-Client`) | ⬜ |
+| 6 | Frontend auth & layout (`TicketDeskPro-Client`) | ✅ Shipped |
 | 7 | Frontend tickets & dashboard UI | ⬜ |
 | 8 | Production deployment (Render + Vercel, CI/CD) | ⬜ |
 
