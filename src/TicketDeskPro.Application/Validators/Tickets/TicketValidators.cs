@@ -39,3 +39,11 @@ public class TicketMessageCreateDtoValidator : AbstractValidator<TicketMessageCr
         RuleFor(x => x.Content).NotEmpty().MinimumLength(1).MaximumLength(5000);
     }
 }
+
+public class TicketAssignDtoValidator : AbstractValidator<TicketAssignRequest>
+{
+    public TicketAssignDtoValidator()
+    {
+        RuleFor(x => x.AssignedToId).NotEmpty();
+    }
+}
