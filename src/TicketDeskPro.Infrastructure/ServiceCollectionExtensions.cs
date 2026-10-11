@@ -64,12 +64,21 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ICategoryRepository, EfCategoryRepository>();
         services.AddScoped<ITagRepository, EfTagRepository>();
         services.AddScoped<ISlaPolicyRepository, EfSlaPolicyRepository>();
+        services.AddScoped<ISlaBreachRepository, EfSlaBreachRepository>();
+        services.AddScoped<INotificationRepository, EfNotificationRepository>();
+        services.AddScoped<ISlaTimerRepository, EfSlaTimerRepository>();
 
         // --- Security services ---
         services.AddScoped<ITokenService, TokenService>();
         services.AddScoped<IPasswordHasher, BcryptPasswordHasher>();
         services.AddScoped<ILoginRateLimiter, RedisLoginRateLimiter>();
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
+
+        // --- Notifications & background jobs (Phase 4) ---
+        services.AddScoped<IEmailService, SmtpEmailService>();
+        services.AddScoped<IDomainEventDispatcher, DomainEventDispatcher>(); // scoped: handlers are scoped
+        services.AddHostedService<BackgroundJobs.OutboxProcessorJob>();
+        services.AddHostedService<BackgroundJobs.SlaCheckerJob>();
 
         return services;
     }
