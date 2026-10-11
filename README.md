@@ -15,6 +15,232 @@ src/
 └── TicketDeskPro.Shared         # Exceptions, constants, extensions
 ```
 
+## Features & Modules
+
+Every module ships with a simple diagram so a reader understands it at a glance.
+
+### 🔐 Authentication (Phase 2)
+
+Login with email + password. Rate-limited per (IP, email) via a Redis sliding window, account locks after 5 failed attempts, and the response never reveals whether an email exists.
+
+```mermaid
+sequenceDiagram
+    actor C as Client
+    participant API as Auth API
+    participant R as Redis
+    participant DB as PostgreSQL
+
+    C->>API: POST /auth/login (email, password)
+    API->>R: sliding-window check (IP + email)
+    alt limit exceeded
+        R-->>API: window full
+        API-->>C: 429 Too Many Requests
+    else allowed
+        R-->>API: ok
+        API->>DB: load user + roles + permissions
+        alt credentials valid
+            DB-->>API: user found
+            API->>API: BCrypt verify password
+            API->>DB: store login attempt (success)
+            API->>R: reset counter
+            API-->>C: 200 accessToken (15 min) + refreshToken (7 days)
+        else invalid
+            API->>DB: store login attempt (failed)
+            API-->>C: 401 generic "Invalid email or password"
+        end
+    end
+```
+
+### 🔄 Refresh Token Rotation (Phase 2)
+
+Every refresh burns the old token and issues a new one in the same session family. Presenting an already-used token means it leaked — the whole family dies and everyone must log in again.
+
+```mermaid
+sequenceDiagram
+    actor C as Client
+    participant API as Auth API
+    participant DB as PostgreSQL
+
+    C->>API: POST /auth/refresh (old refreshToken)
+    API->>DB: look up token by SHA-256 hash
+    alt token already used (revoked)
+        DB-->>API: revoked token found
+        API->>DB: revoke the ENTIRE token family
+        API-->>C: 401 invalid token state (reuse detected)
+    else token expired
+        API-->>C: 401 token expired
+    else token valid
+        DB-->>API: active token + user
+        API->>DB: rotate in one transaction (revoke old, insert new, link audit)
+        alt rotation lost a race
+            API-->>C: 401 invalid token state
+        else rotation won
+            API-->>C: 200 new accessToken + new refreshToken
+        end
+    end
+```
+
+### 🔑 Password Reset (Phase 2)
+
+Forgot-password always returns the same response (no email enumeration); the reset email goes through the transactional outbox; resetting the password kills every active session.
+
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant API as Auth API
+    participant DB as PostgreSQL
+    participant W as Outbox Worker (Phase 4)
+
+    U->>API: POST /auth/forgot-password (email)
+    API->>DB: find user
+    alt user exists
+        API->>DB: store reset token hash + 1h expiry
+        API->>DB: queue email in outbox (same transaction)
+    end
+    API-->>U: 200 always (never reveals if email exists)
+    W->>DB: poll outbox, send email with reset link
+    U->>API: POST /auth/reset-password (token, newPassword)
+    API->>DB: validate token hash + expiry
+    API->>DB: set new BCrypt hash, clear token, revoke ALL refresh tokens
+    API-->>U: 200 password updated
+```
+
+### 🛡️ Permission-Based Authorization (Phase 2)
+
+Permissions ride the JWT; a `RequirePermission` filter gates each endpoint; the service adds ownership rules on top (customers only ever see their own tickets — as a 404, so attackers can't probe which tickets exist).
+
+```mermaid
+flowchart LR
+    REQ["🔒 Request with JWT"] --> CLAIMS["Token carries<br/>role + permissions claims"]
+    CLAIMS --> GATE{"RequirePermission<br/>filter"}
+    GATE -->|"claim present"| NEXT["Endpoint executes"]
+    GATE -->|"claim missing"| DENY["403 Forbidden<br/>AUTH_004"]
+    NEXT --> OWN{"Ownership check<br/>in service"}
+    OWN -->|"customer + own ticket"| OK["Allowed"]
+    OWN -->|"customer + other's ticket"| HIDE["404 (no existence leak)"]
+
+    classDef good fill:#D1FAE5,stroke:#059669,color:#064E3B
+    classDef bad fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D
+    classDef step fill:#DBEAFE,stroke:#3B82F6,color:#1E3A8A
+    class REQ,CLAIMS step
+    class NEXT,OK good
+    class DENY,HIDE bad
+```
+
+### 🎫 Ticket Lifecycle (Phase 3)
+
+A 7-state workflow enforced by a server-side state machine — invalid jumps return `409`. An Admin may force-close from **any** state (BR-018, dashed), and a resolved ticket auto-closes after 48h once the Phase 4 job lands.
+
+```mermaid
+flowchart LR
+    OPEN(("Open")) --> INPROG(("In&nbsp;Progress"))
+    INPROG --> AWAIT(("Awaiting&nbsp;Customer"))
+    AWAIT --> REPLIED(("Customer&nbsp;Replied"))
+    REPLIED --> INPROG
+    INPROG --> RESOLVED(("Resolved"))
+    RESOLVED -->|"within 48h (BR-019)"| REOPENED(("Reopened"))
+    REOPENED --> INPROG
+    RESOLVED --> CLOSED(("Closed"))
+    OPEN -.->|"Admin only — from any state (BR-018)"| CLOSED
+    RESOLVED -.->|"auto after 48h (Phase 4)"| CLOSED
+
+    classDef terminal fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D
+    classDef active fill:#DBEAFE,stroke:#3B82F6,color:#1E3A8A
+    classDef waiting fill:#FEF3C7,stroke:#F59E0B,color:#92400E
+    class CLOSED terminal
+    class OPEN,INPROG,REPLIED,REOPENED active
+    class AWAIT,RESOLVED waiting
+```
+
+### 🆕 Creating a Ticket (Phase 3)
+
+One transaction writes the ticket, its SLA stopwatch (deadlines from the priority policy) and the audit row. Concurrency-safe `TKT-0001` numbering; response carries an `ETag` for optimistic updates.
+
+```mermaid
+sequenceDiagram
+    actor C as Customer
+    participant API as Tickets API
+    participant DB as PostgreSQL
+
+    C->>API: POST /tickets (title, description, priority, category)
+    API->>API: FluentValidation (BR-007 / BR-008)
+    API->>DB: next ticket number (TKT-0001, collision-safe)
+    API->>DB: INSERT ticket + SLA timer (deadlines from policy) + audit row — one transaction
+    DB-->>API: committed
+    API-->>C: 201 TKT-0001 with ETag header
+    Note over API,DB: the SLA stopwatch starts the moment the ticket exists
+```
+
+### 💬 Replies & Internal Notes (Phase 3)
+
+Customers and agents talk in one thread. Agents can post internal notes that customers never see — and the first public agent reply stamps the SLA first-response time.
+
+```mermaid
+flowchart TD
+    MSG["New message on a ticket"] --> KIND{"Is it internal?"}
+    KIND -->|"No (public reply)"| PERM{"Author has<br/>agent role?"}
+    PERM -->|"Yes"| FR{"First public agent reply?"}
+    FR -->|"Yes"| STAMP["Stamp SLA FirstResponseAt"]
+    FR -->|"No"| STORE
+    PERM -->|"No (customer)"| STORE["Stored, visible to everyone"]
+    KIND -->|"Yes (internal note)"| NOTE_PERM{"Author has<br/>internal-note permission?"}
+    NOTE_PERM -->|"Yes"| NOTE["Stored — agents & admins only"]
+    NOTE_PERM -->|"No (customer)"| DENY403["403 Forbidden"]
+    NOTE -.->|"hidden from customers (BR-023)"| HIDE["Customer never sees it"]
+
+    classDef good fill:#D1FAE5,stroke:#059669,color:#064E3B
+    classDef bad fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D
+    classDef step fill:#EDE9FE,stroke:#8B5CF6,color:#5B21B6
+    class STORE,NOTE,STAMP,HIDE good
+    class DENY403 bad
+    class KIND,PERM,FR,NOTE_PERM step
+```
+
+### 📎 File Attachments (Phase 3)
+
+Uploads pass a strict gate before touching disk: safe extension list, 5MB cap, 5 files per ticket. Storage paths are sanitized against traversal attacks.
+
+```mermaid
+flowchart TD
+    UP["Upload attachment (max 5MB)"] --> TYPE{"Extension in<br/>safe list?<br/>jpg png gif pdf docx xlsx txt"}
+    TYPE -->|"No"| REJ409["409 CPL_006"]
+    TYPE -->|"Yes"| SIZE{"Size ≤ 5MB?"}
+    SIZE -->|"No"| REJ422["422 validation error"]
+    SIZE -->|"Yes"| COUNT{"Ticket already has<br/>5 attachments?"}
+    COUNT -->|"Yes"| REJ409b["409 CPL_006"]
+    COUNT -->|"No"| STORE["Stored as<br/>uploads/tickets/{id}/{guid}_{name}"]
+    STORE --> OK201["201 attachment id"]
+
+    classDef bad fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D
+    classDef good fill:#D1FAE5,stroke:#059669,color:#064E3B
+    classDef step fill:#FEF3C7,stroke:#F59E0B,color:#92400E
+    class REJ409,REJ422,REJ409b bad
+    class STORE,OK201 good
+    class TYPE,SIZE,COUNT step
+```
+
+### 🗑️ Soft Delete & Restore (Phase 1 + 3)
+
+Delete never removes rows — an interceptor flips `isDeleted` and stamps who did it; an audit row captures the action. Admins can restore a deleted ticket at any time.
+
+```mermaid
+sequenceDiagram
+    actor Adm as Admin
+    participant API as Tickets API
+    participant DB as PostgreSQL
+
+    Adm->>API: DELETE /tickets/{id}
+    API->>API: require tickets.delete permission
+    API->>DB: UPDATE ticket SET isDeleted = true, deletedBy = adminId (interceptor)
+    API->>DB: write audit row (action = Delete)
+    API-->>Adm: 200 deleted
+    Note over DB: row stays in the table — the app never hard-deletes
+
+    Adm->>API: POST /tickets/{id}/restore
+    API->>DB: UPDATE ticket SET isDeleted = false
+    API-->>Adm: 200 restored (visible in queues again)
+```
+
 ## Database Schema
 
 20 tables, code-first via EF Core. Colors group the modules:
@@ -57,6 +283,9 @@ erDiagram
         varchar password_hash
         varchar first_name
         varchar last_name
+        varchar phone
+        varchar password_reset_token_hash
+        timestamp password_reset_token_expires_at
         bool is_active
         bool is_deleted
         timestamp created_at
@@ -137,6 +366,7 @@ erDiagram
         uuid sla_policy_id FK
         timestamp first_response_deadline
         timestamp resolution_deadline
+        timestamp first_response_at
         bool is_first_response_breached
         bool is_resolution_breached
     }
@@ -144,9 +374,11 @@ erDiagram
         uuid id PK
         uuid user_id FK
         varchar token_hash UK
+        varchar replaced_by_token_hash
         uuid family_id
         timestamp expires_at
         timestamp revoked_at
+        uint xmin "concurrency"
     }
     LOGIN_ATTEMPTS {
         uuid id PK
@@ -169,12 +401,14 @@ erDiagram
         uuid user_id FK
         int type
         varchar title
+        varchar message
         bool is_read
     }
     EMAIL_OUTBOX {
         uuid id PK
         varchar to_email
         varchar subject
+        text body
         varchar status
         int attempts
         timestamp sent_at
@@ -203,6 +437,19 @@ erDiagram
 <br>
 
 <sub>Notes: every table also carries `id`, `created_at`, `updated_at` and soft-delete columns (`is_deleted`, `deleted_at`, `deleted_by`) from `BaseEntity` — except the three join tables (composite keys) and `audit_logs` (append-only by design). `EMAIL_OUTBOX` and `LOGIN_ATTEMPTS` intentionally have **no foreign keys** — they address users by email string, which is why they float free above.</sub>
+
+## Roadmap
+
+| Phase | Module | Status |
+|---|---|---|
+| 1 | Database design, EF Core migrations, seed data | ✅ Shipped |
+| 2 | JWT auth, refresh-token rotation, RBAC | ✅ Shipped |
+| 3 | Ticket CRUD, state machine, messages, attachments, audit | ✅ Shipped |
+| 4 | SLA engine + notifications (Outbox, SignalR) | 🚧 Next |
+| 5 | Dashboards & analytics (Redis KPIs, health checks) | ⬜ |
+| 6 | Frontend auth & layout (`TicketDeskPro-Client`) | ⬜ |
+| 7 | Frontend tickets & dashboard UI | ⬜ |
+| 8 | Production deployment (Render + Vercel, CI/CD) | ⬜ |
 
 ## Prerequisites
 
