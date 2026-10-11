@@ -10,6 +10,7 @@ public static class ErrorCodes
     public const string UserLocked = "AUTH_005";
     public const string TicketNotFound = "RES_001";
     public const string UserNotFound = "RES_002";
+    public const string CategoryNotFound = "RES_003";
     public const string Validation = "VAL_001";
     public const string FileTooLarge = "VAL_002";
     public const string InvalidFileType = "VAL_003";
@@ -17,6 +18,8 @@ public static class ErrorCodes
     public const string InvalidStateTransition = "CPL_002";
     public const string InactiveAgent = "CPL_003";
     public const string ConcurrencyConflict = "CPL_004";
+    public const string TicketNotEditable = "CPL_005";
+    public const string AttachmentNotAllowed = "CPL_006";
     public const string AuthRateLimited = "RAT_001";
     public const string ApiRateLimited = "RAT_002";
     public const string DatabaseTimeout = "SYS_001";
