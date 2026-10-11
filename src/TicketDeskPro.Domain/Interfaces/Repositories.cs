@@ -1,4 +1,5 @@
 using TicketDeskPro.Domain.Entities;
+using TicketDeskPro.Domain.Enums;
 
 namespace TicketDeskPro.Domain.Interfaces;
 
@@ -22,11 +23,43 @@ public interface IUserRepository
     Task<IReadOnlyList<User>> GetActiveAgentsByLoadAsync(CancellationToken ct = default);
     Task<IReadOnlyList<User>> GetActiveByRoleAsync(string roleName, CancellationToken ct = default);
     Task<NotificationPreference?> GetNotificationPreferenceAsync(Guid userId, CancellationToken ct = default);
+    Task<NotificationPreference?> GetNotificationPreferenceTrackedAsync(Guid userId, CancellationToken ct = default);
+    Task SetNotificationPreferenceAsync(NotificationPreference preference, CancellationToken ct = default);
+
+    // Admin management (US-1.08)
+    Task<UserPage> GetPageAsync(string? search, string? roleName, int limit, string? cursor, CancellationToken ct = default);
+    Task<User?> GetByIdWithRolesTrackedAsync(Guid id, bool includeDeleted = false, CancellationToken ct = default);
+    void Remove(User user);
 }
+
+public record UserPage(IReadOnlyList<User> Items, string? NextCursor, bool HasMore);
 
 public interface IRoleRepository
 {
     Task<Role?> GetByNameAsync(string name, CancellationToken ct = default);
+    Task<IReadOnlyList<Role>> GetAllWithPermissionsAsync(CancellationToken ct = default);
+    Task<Role?> GetByIdWithPermissionsAsync(Guid id, CancellationToken ct = default);
+    Task<bool> NameExistsAsync(string name, Guid? excludeId, CancellationToken ct = default);
+    Task AddAsync(Role role, CancellationToken ct = default);
+    void Remove(Role role);
+}
+
+public interface IAuditLogRepository
+{
+    Task<AuditLogPage> GetPageAsync(Guid? userId, string? entityType, string? action,
+        DateTime? from, DateTime? to, int limit, string? cursor, CancellationToken ct = default);
+}
+
+public record AuditLogPage(IReadOnlyList<AuditLog> Items, string? NextCursor, bool HasMore);
+
+/// <summary>Read-model queries behind the dashboard (Redis caches their results).</summary>
+public interface IDashboardRepository
+{
+    Task<IReadOnlyList<(TicketPriority Priority, int Count)>> GetOpenCountsByPriorityAsync(CancellationToken ct = default);
+    Task<(int ResolvedDistinct7d, int ResolvedWithTimer7d, int WithinSla7d, double AvgFirstResponseMinutes, double AvgResolutionMinutes)> GetResolutionStatsAsync(DateTime now, int days, CancellationToken ct = default);
+    Task<IReadOnlyList<(DateTime Day, int Created, int Resolved)>> GetDailyTrendsAsync(DateTime now, int days, CancellationToken ct = default);
+    Task<IReadOnlyList<(string CategoryName, int Count)>> GetCategoryCountsAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<(Guid UserId, string AgentName, int OpenAssigned, int Resolved30d, double AvgResolutionMinutes)>> GetAgentStatsAsync(DateTime now, int days, CancellationToken ct = default);
 }
 
 public interface IRefreshTokenRepository
@@ -92,11 +125,22 @@ public interface ICategoryRepository
 {
     Task<Category?> GetByIdAsync(Guid id, CancellationToken ct = default);
     Task<IReadOnlyList<Category>> GetAllActiveAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<Category>> GetAllAsync(CancellationToken ct = default);
+    Task<bool> NameExistsAsync(string name, Guid? excludeId, CancellationToken ct = default);
+    Task<bool> IsReferencedByTicketsAsync(Guid categoryId, CancellationToken ct = default);
+    Task AddAsync(Category category, CancellationToken ct = default);
+    void Remove(Category category);
 }
 
 public interface ITagRepository
 {
     Task<IReadOnlyList<Tag>> GetByIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct = default);
+    Task<IReadOnlyList<Tag>> GetAllAsync(CancellationToken ct = default);
+    Task<Tag?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    Task<bool> NameExistsAsync(string name, Guid? excludeId, CancellationToken ct = default);
+    Task<bool> IsReferencedByTicketsAsync(Guid tagId, CancellationToken ct = default);
+    Task AddAsync(Tag tag, CancellationToken ct = default);
+    void Remove(Tag tag);
 }
 
 public interface ISlaPolicyRepository
