@@ -369,8 +369,11 @@ public class AuthService : IAuthService
         var userId = _currentUser.UserId
             ?? throw new UnauthorizedException(ErrorCodes.InvalidTokenState, "Not authenticated.");
 
-        return await _users.GetByIdWithRolesAsync(userId, ct)
+        var user = await _users.GetByIdWithRolesAsync(userId, ct)
             ?? throw new NotFoundException(ErrorCodes.UserNotFound, "The requested user was not found.");
+        if (!user.IsActive)
+            throw new ForbiddenException(ErrorCodes.UserLocked, "This account has been deactivated.");
+        return user;
     }
 
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
