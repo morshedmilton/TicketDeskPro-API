@@ -30,6 +30,7 @@ public class TicketService : ITicketService
     private readonly IUserRepository _users;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IFileStorageService _storage;
+    private readonly ICacheService _cache;
     private readonly ICurrentUserService _currentUser;
     private readonly IValidator<TicketCreateRequest> _createValidator;
     private readonly IValidator<TicketUpdateRequest> _updateValidator;
@@ -47,6 +48,7 @@ public class TicketService : ITicketService
         IUserRepository users,
         IUnitOfWork unitOfWork,
         IFileStorageService storage,
+        ICacheService cache,
         ICurrentUserService currentUser,
         IValidator<TicketCreateRequest> createValidator,
         IValidator<TicketUpdateRequest> updateValidator,
@@ -63,6 +65,7 @@ public class TicketService : ITicketService
         _users = users;
         _unitOfWork = unitOfWork;
         _storage = storage;
+        _cache = cache;
         _currentUser = currentUser;
         _createValidator = createValidator;
         _updateValidator = updateValidator;
@@ -154,6 +157,7 @@ public class TicketService : ITicketService
 
         await _tickets.AddAsync(ticket, ct);
         await _unitOfWork.SaveChangesAsync(ct);
+        await _cache.RemoveByPrefixAsync(DashboardService.CachePrefix, ct); // dashboard cache-aside invalidation
 
         return await GetByIdAsync(ticket.Id, ct);
     }
@@ -211,6 +215,7 @@ public class TicketService : ITicketService
         }
 
         await _unitOfWork.SaveChangesAsync(ct);
+        await _cache.RemoveByPrefixAsync(DashboardService.CachePrefix, ct); // dashboard cache-aside invalidation
         return await GetByIdAsync(id, ct);
     }
 
@@ -225,6 +230,7 @@ public class TicketService : ITicketService
 
         _tickets.Remove(ticket); // SoftDeleteInterceptor flips this to IsDeleted=true
         await _unitOfWork.SaveChangesAsync(ct);
+        await _cache.RemoveByPrefixAsync(DashboardService.CachePrefix, ct); // dashboard cache-aside invalidation
     }
 
     public async Task<TicketDetailDto> RestoreAsync(Guid id, CancellationToken ct = default)
@@ -242,6 +248,7 @@ public class TicketService : ITicketService
         ticket.DeletedAt = null;
         ticket.DeletedById = null;
         await _unitOfWork.SaveChangesAsync(ct);
+        await _cache.RemoveByPrefixAsync(DashboardService.CachePrefix, ct); // dashboard cache-aside invalidation
 
         return await GetByIdAsync(id, ct);
     }
@@ -320,6 +327,7 @@ public class TicketService : ITicketService
             fromStatus.ToString(), request.Status.ToString()));
 
         await _unitOfWork.SaveChangesAsync(ct);
+        await _cache.RemoveByPrefixAsync(DashboardService.CachePrefix, ct); // dashboard cache-aside invalidation
         return await GetByIdAsync(id, ct);
     }
 
@@ -369,6 +377,7 @@ public class TicketService : ITicketService
             }
 
             await _unitOfWork.SaveChangesAsync(ct);
+        await _cache.RemoveByPrefixAsync(DashboardService.CachePrefix, ct); // dashboard cache-aside invalidation
         }
 
         return await GetByIdAsync(id, ct);
@@ -427,6 +436,7 @@ public class TicketService : ITicketService
             viewer.Id, request.IsInternal));
 
         await _unitOfWork.SaveChangesAsync(ct);
+        await _cache.RemoveByPrefixAsync(DashboardService.CachePrefix, ct); // dashboard cache-aside invalidation
         return ToMessage(message);
     }
 
@@ -477,6 +487,7 @@ public class TicketService : ITicketService
         };
         await _attachments.AddAsync(attachment, ct);
         await _unitOfWork.SaveChangesAsync(ct);
+        await _cache.RemoveByPrefixAsync(DashboardService.CachePrefix, ct); // dashboard cache-aside invalidation
 
         return ToAttachment(attachment);
     }
@@ -518,6 +529,7 @@ public class TicketService : ITicketService
 
         _attachments.Remove(attachment);
         await _unitOfWork.SaveChangesAsync(ct);
+        await _cache.RemoveByPrefixAsync(DashboardService.CachePrefix, ct); // dashboard cache-aside invalidation
         // ponytail: the physical file stays on disk until a cleanup job (Phase 8) sweeps unreferenced files.
     }
 
@@ -527,8 +539,14 @@ public class TicketService : ITicketService
     {
         var userId = _currentUser.UserId
             ?? throw new UnauthorizedException(ErrorCodes.InvalidTokenState, "Not authenticated.");
-        return await _users.GetByIdWithRolesAsync(userId, ct)
+        var user = await _users.GetByIdWithRolesAsync(userId, ct)
             ?? throw new NotFoundException(ErrorCodes.UserNotFound, "The requested user was not found.");
+
+        // Tokens outlive deactivation by up to 15 minutes — close that gap per request.
+        if (!user.IsActive)
+            throw new ForbiddenException(ErrorCodes.UserLocked, "This account has been deactivated.");
+
+        return user;
     }
 
     private static bool HasPermission(User viewer, string permission) =>
