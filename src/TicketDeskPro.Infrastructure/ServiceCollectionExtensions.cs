@@ -32,10 +32,14 @@ public static class ServiceCollectionExtensions
             ?? throw new InvalidOperationException("Missing connection string 'DefaultConnection'.");
 
         services.AddScoped<SoftDeleteInterceptor>();
+        services.AddScoped<AuditInterceptor>();
         services.AddDbContext<AppDbContext>((serviceProvider, options) =>
             options.UseNpgsql(connectionString, npgsql =>
                        npgsql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery))
-                   .AddInterceptors(serviceProvider.GetRequiredService<SoftDeleteInterceptor>()));
+                   // Order matters: soft-delete converts DELETE→UPDATE first, so the audit
+                   // interceptor records it as the "Delete" it really was.
+                   .AddInterceptors(serviceProvider.GetRequiredService<SoftDeleteInterceptor>(),
+                                    serviceProvider.GetRequiredService<AuditInterceptor>()));
 
         // --- Redis (abortConnect=false: start even if Redis is down; per-request
         //     failures surface as SYS_002 from the rate limiter instead of crashing startup) ---
@@ -54,11 +58,18 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IRefreshTokenRepository, EfRefreshTokenRepository>();
         services.AddScoped<ILoginAttemptRepository, EfLoginAttemptRepository>();
         services.AddScoped<IEmailOutboxRepository, EfEmailOutboxRepository>();
+        services.AddScoped<ITicketRepository, EfTicketRepository>();
+        services.AddScoped<ITicketMessageRepository, EfTicketMessageRepository>();
+        services.AddScoped<ITicketAttachmentRepository, EfTicketAttachmentRepository>();
+        services.AddScoped<ICategoryRepository, EfCategoryRepository>();
+        services.AddScoped<ITagRepository, EfTagRepository>();
+        services.AddScoped<ISlaPolicyRepository, EfSlaPolicyRepository>();
 
         // --- Security services ---
         services.AddScoped<ITokenService, TokenService>();
         services.AddScoped<IPasswordHasher, BcryptPasswordHasher>();
         services.AddScoped<ILoginRateLimiter, RedisLoginRateLimiter>();
+        services.AddScoped<IFileStorageService, LocalFileStorageService>();
 
         return services;
     }
