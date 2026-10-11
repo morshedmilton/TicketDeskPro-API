@@ -5,6 +5,7 @@ using TicketDeskPro.Application.Extensions;
 using TicketDeskPro.Application.Interfaces;
 using TicketDeskPro.Domain.Entities;
 using TicketDeskPro.Domain.Enums;
+using TicketDeskPro.Domain.Events;
 using TicketDeskPro.Domain.Interfaces;
 using TicketDeskPro.Domain.Services;
 using TicketDeskPro.Shared.Constants;
@@ -34,6 +35,7 @@ public class TicketService : ITicketService
     private readonly IValidator<TicketUpdateRequest> _updateValidator;
     private readonly IValidator<TicketStatusChangeRequest> _statusValidator;
     private readonly IValidator<TicketMessageCreateRequest> _messageValidator;
+    private readonly IValidator<TicketAssignRequest> _assignValidator;
 
     public TicketService(
         ITicketRepository tickets,
@@ -49,7 +51,8 @@ public class TicketService : ITicketService
         IValidator<TicketCreateRequest> createValidator,
         IValidator<TicketUpdateRequest> updateValidator,
         IValidator<TicketStatusChangeRequest> statusValidator,
-        IValidator<TicketMessageCreateRequest> messageValidator)
+        IValidator<TicketMessageCreateRequest> messageValidator,
+        IValidator<TicketAssignRequest> assignValidator)
     {
         _tickets = tickets;
         _messages = messages;
@@ -65,6 +68,7 @@ public class TicketService : ITicketService
         _updateValidator = updateValidator;
         _statusValidator = statusValidator;
         _messageValidator = messageValidator;
+        _assignValidator = assignValidator;
     }
 
     // ================= list =================
@@ -137,6 +141,16 @@ public class TicketService : ITicketService
                 ResolutionDeadline = now.AddMinutes(policy.ResolutionMinutes)
             };
         }
+
+        // US-6.02 round-robin: hand the ticket to the least-loaded active agent.
+        // FK scalar only — the pool query is AsNoTracking, so setting the navigation
+        // would make EF try to INSERT the already-existing user row.
+        var agentPool = await _users.GetActiveAgentsByLoadAsync(ct);
+        var assignedAgent = agentPool.FirstOrDefault();
+        if (assignedAgent is not null)
+            ticket.AssignedToId = assignedAgent.Id;
+
+        ticket.AddDomainEvent(new TicketCreatedEvent(ticket.Id, ticket.TicketNumber, creator.Id, ticket.AssignedToId));
 
         await _tickets.AddAsync(ticket, ct);
         await _unitOfWork.SaveChangesAsync(ct);
@@ -272,17 +286,91 @@ public class TicketService : ITicketService
             throw new ConflictException(ErrorCodes.InvalidStateTransition,
                 $"Cannot transition ticket from {ticket.Status} to {request.Status}.");
 
+        var fromStatus = ticket.Status;
+
         ticket.StatusHistory.Add(new TicketStatusHistory
         {
             Ticket = ticket,
-            FromStatus = ticket.Status,
+            FromStatus = fromStatus,
             ToStatus = request.Status,
             Reason = request.Reason?.Trim(),
             ChangedById = viewer.Id
         });
         ticket.Status = request.Status;
 
+        // BR-031/BR-032: the resolution stopwatch freezes while we wait for the customer.
+        if (ticket.SlaTimer is not null)
+        {
+            if (request.Status == TicketStatus.AwaitingCustomer && ticket.SlaTimer.PausedAt is null)
+            {
+                ticket.SlaTimer.PausedAt = DateTime.UtcNow;
+            }
+            else if (fromStatus == TicketStatus.AwaitingCustomer
+                     && request.Status == TicketStatus.CustomerReplied
+                     && ticket.SlaTimer.PausedAt is { } pausedAt)
+            {
+                var resumeAt = DateTime.UtcNow;
+                ticket.SlaTimer.ResolutionDeadline += resumeAt - pausedAt; // push the deadline by the pause length
+                ticket.SlaTimer.PausedAt = null;
+            }
+        }
+
+        ticket.AddDomainEvent(new TicketStatusChangedEvent(
+            ticket.Id, ticket.TicketNumber, ticket.CreatedById, ticket.AssignedToId, viewer.Id,
+            fromStatus.ToString(), request.Status.ToString()));
+
         await _unitOfWork.SaveChangesAsync(ct);
+        return await GetByIdAsync(id, ct);
+    }
+
+    // ================= assignment (Epic 6) =================
+
+    public async Task<TicketDetailDto> AssignAsync(Guid id, TicketAssignRequest request, uint? ifMatch, CancellationToken ct = default)
+    {
+        await _assignValidator.ValidateAndThrowAsync(request, ct);
+        var viewer = await RequireViewerAsync(ct);
+        var ticket = await _tickets.GetByIdAsync(id, includeDetails: true, includeDeleted: false, ct)
+            ?? throw NotFound();
+
+        EnsureCanView(viewer, ticket);
+        EnsurePermission(viewer, AppPermissions.TicketsAssign);
+        EnsureEtag(ticket, ifMatch);
+
+        var assignee = await _users.GetByIdWithRolesAsync(request.AssignedToId, ct)
+            ?? throw new NotFoundException(ErrorCodes.UserNotFound, "The requested user was not found.");
+
+        if (!assignee.IsActive)
+            throw new ConflictException(ErrorCodes.InactiveAgent, "Cannot assign a ticket to an inactive agent.");
+        if (!HasPermission(assignee, AppPermissions.TicketsUpdate))
+            throw new ConflictException(ErrorCodes.InactiveAgent, "Cannot assign a ticket to a user who is not an agent.");
+
+        var previousAssigneeId = ticket.AssignedToId;
+        if (previousAssigneeId != assignee.Id)
+        {
+            ticket.AssignedToId = assignee.Id;
+            ticket.AssignedTo = assignee;
+            ticket.AddDomainEvent(new TicketAssignedEvent(ticket.Id, ticket.TicketNumber, assignee.Id, previousAssigneeId));
+
+            // US-6.03 claim: taking an Open ticket yourself also starts the work.
+            if (assignee.Id == viewer.Id && ticket.Status == TicketStatus.Open)
+            {
+                ticket.StatusHistory.Add(new TicketStatusHistory
+                {
+                    Ticket = ticket,
+                    FromStatus = TicketStatus.Open,
+                    ToStatus = TicketStatus.InProgress,
+                    Reason = "Claimed by agent",
+                    ChangedById = viewer.Id
+                });
+                ticket.Status = TicketStatus.InProgress;
+                ticket.AddDomainEvent(new TicketStatusChangedEvent(
+                    ticket.Id, ticket.TicketNumber, ticket.CreatedById, ticket.AssignedToId, viewer.Id,
+                    nameof(TicketStatus.Open), nameof(TicketStatus.InProgress)));
+            }
+
+            await _unitOfWork.SaveChangesAsync(ct);
+        }
+
         return await GetByIdAsync(id, ct);
     }
 
@@ -333,6 +421,10 @@ public class TicketService : ITicketService
         // BR-033: first public agent reply satisfies the First Response SLA.
         if (!request.IsInternal && IsAgentLike(viewer) && ticket.SlaTimer is { FirstResponseAt: null })
             ticket.SlaTimer.FirstResponseAt = DateTime.UtcNow;
+
+        ticket.AddDomainEvent(new TicketMessageAddedEvent(
+            ticket.Id, ticket.TicketNumber, ticket.CreatedById, ticket.AssignedToId,
+            viewer.Id, request.IsInternal));
 
         await _unitOfWork.SaveChangesAsync(ct);
         return ToMessage(message);
@@ -497,6 +589,11 @@ public class TicketService : ITicketService
         t.CreatedById, t.CreatedBy.FirstName + " " + t.CreatedBy.LastName,
         t.AssignedToId, t.AssignedTo is null ? null : t.AssignedTo.FirstName + " " + t.AssignedTo.LastName,
         t.Tags.Select(tt => tt.Tag.Name).ToList(),
+        t.SlaTimer is null
+            ? null
+            : new SlaSummaryDto(t.SlaTimer.FirstResponseDeadline, t.SlaTimer.ResolutionDeadline,
+                t.SlaTimer.IsResolutionPaused, t.SlaTimer.IsFirstResponseBreached,
+                t.SlaTimer.IsResolutionBreached, t.SlaTimer.FirstResponseAt),
         t.Xmin,
         t.CreatedAt, t.UpdatedAt);
 
