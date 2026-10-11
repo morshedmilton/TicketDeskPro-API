@@ -11,8 +11,9 @@ public class TicketStatusHistory : BaseEntity
     public TicketStatus ToStatus { get; set; }
     public string? Reason { get; set; }
 
-    public Guid ChangedById { get; set; }
-    public User ChangedBy { get; set; } = null!;
+    /// <summary>Null for system transitions (e.g. the 48h auto-close worker).</summary>
+    public Guid? ChangedById { get; set; }
+    public User? ChangedBy { get; set; }
 
     // CreatedAt (from BaseEntity) is the moment the transition happened.
 }
