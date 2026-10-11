@@ -28,7 +28,11 @@ public class CorrelationIdMiddleware
             return Task.CompletedTask;
         });
 
-        await _next(context);
+        // Structured logging: every log line in this request carries the CorrelationId.
+        using (Serilog.Context.LogContext.PushProperty("CorrelationId", correlationId))
+        {
+            await _next(context);
+        }
     }
 
     public static string GetCorrelationId(HttpContext context) =>
