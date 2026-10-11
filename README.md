@@ -241,6 +241,88 @@ sequenceDiagram
     API-->>Adm: 200 restored (visible in queues again)
 ```
 
+### 📮 Outbox Pattern — Guaranteed Email Delivery (Phase 4)
+
+Emails are never written directly to SMTP inside a request. The email row is committed **in the same transaction** as the business change; a background worker sends it with retries. If SMTP dies, no email is lost — it waits.
+
+```mermaid
+sequenceDiagram
+    participant API as Business code
+    participant DB as PostgreSQL
+    participant J as Outbox Worker (10s)
+    participant SMTP as Email provider
+
+    Note over API,DB: Transaction 1 — atomic, email cannot be lost
+    API->>DB: UPDATE ticket + INSERT EmailOutbox (Pending)
+    DB-->>API: commit
+
+    loop every 10 seconds
+        J->>DB: pick due Pending rows (NextAttemptAt <= now)
+        alt SMTP configured
+            J->>SMTP: send email
+            alt sent
+                DB-->>J: mark Sent
+            else failed
+                J->>DB: attempts++, backoff 2^attempts minutes
+                note right of J: after 3 attempts -> Failed (dead letter)
+            end
+        else SMTP not configured (dev)
+            J->>J: hold rows as Pending, log warning
+        end
+    end
+
+    Note over J,DB: retention: Sent pruned after 7d, Failed after 30d
+```
+
+### ⏱️ SLA Checker Worker (Phase 4)
+
+A watchdog that wakes every 60 seconds: warns at 75% elapsed, records breaches (escalating priority), and auto-closes tickets that sat Resolved for 48 hours.
+
+```mermaid
+flowchart TD
+    TICK["⏱️ Every 60 seconds"] --> W{"75% of first-response<br/>window elapsed,<br/>not yet answered?"}
+    W -->|"Yes, once"| WARN["Warn assigned agent<br/>(in-app + email, BR-035)"]
+    W -->|"No"| FR
+    WARN --> FR{"First-response deadline<br/>passed, ticket not closed?"}
+    FR -->|"Yes"| FRB["Flag + escalate priority (BR-034)<br/>+ breach record + alert agent & admins"]
+    FR -->|"No"| RES{"Resolution deadline passed<br/>and ticket still open<br/>(not paused, not resolved)?"}
+    RES -->|"Yes"| RESB["Flag + escalate priority<br/>+ breach record + alert"]
+    RES -->|"No"| CLOSE{"Resolved > 48 hours?<br/>(BR-018)"}
+    CLOSE -->|"Yes"| AUTOCLOSE["Auto-close + history row<br/>+ customer email"]
+    CLOSE -->|"No"| DONE["next pass in 60s"]
+    AUTOCLOSE --> DONE
+
+    classDef alert fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D
+    classDef warn fill:#FEF3C7,stroke:#F59E0B,color:#92400E
+    classDef step fill:#DBEAFE,stroke:#3B82F6,color:#1E3A8A
+    class FRB,RESB,AUTOCLOSE alert
+    class WARN warn
+    class TICK,FR,RES,CLOSE,DONE step
+```
+
+### 📡 Domain Events → Notifications & Real-time (Phase 4)
+
+Raising an event on an entity is all a service does — after the transaction commits, handlers fan out to in-app notifications, outbox emails and SignalR pushes. A failing handler is logged, never breaks the request.
+
+```mermaid
+flowchart LR
+    SVC["Service changes data<br/>(e.g. ticket created)"] --> SAVE["SaveChangesAsync"]
+    SAVE --> TX["DB transaction commits"]
+    TX --> CLEAR["Collect domain events<br/>from tracked entities"]
+    CLEAR --> DISPATCH["Dispatch to handlers"]
+    DISPATCH --> H1["NotificationDispatcher:<br/>in-app rows + outbox emails"]
+    DISPATCH --> H2["SignalRRealtimeNotifier:<br/>push to user:{id} & role:agents"]
+    H1 --> GUARD["Handler failures are logged,<br/>never fail the HTTP request"]
+    H2 --> GUARD
+
+    classDef step fill:#EDE9FE,stroke:#8B5CF6,color:#5B21B6
+    classDef good fill:#D1FAE5,stroke:#059669,color:#064E3B
+    class SVC,SAVE,TX,CLEAR,DISPATCH step
+    class H1,H2,GUARD good
+```
+
+Also in this phase: **manual ticket assignment** (`POST /tickets/{id}/assign`, claim-to-InProgress), **round-robin auto-assignment** to the least-loaded active agent on creation, and **SignalR hub** at `/hubs/notifications` (JWT via header or `?access_token=`).
+
 ## Database Schema
 
 20 tables, code-first via EF Core. Colors group the modules:
@@ -445,7 +527,7 @@ erDiagram
 | 1 | Database design, EF Core migrations, seed data | ✅ Shipped |
 | 2 | JWT auth, refresh-token rotation, RBAC | ✅ Shipped |
 | 3 | Ticket CRUD, state machine, messages, attachments, audit | ✅ Shipped |
-| 4 | SLA engine + notifications (Outbox, SignalR) | 🚧 Next |
+| 4 | SLA engine + notifications (Outbox, SignalR) | ✅ Shipped |
 | 5 | Dashboards & analytics (Redis KPIs, health checks) | ⬜ |
 | 6 | Frontend auth & layout (`TicketDeskPro-Client`) | ⬜ |
 | 7 | Frontend tickets & dashboard UI | ⬜ |
