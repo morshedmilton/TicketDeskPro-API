@@ -25,7 +25,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.AuditLog", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<string>("Action")
@@ -69,7 +68,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.Category", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
@@ -110,7 +108,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.EmailOutbox", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<int>("Attempts")
@@ -168,7 +165,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.LoginAttempt", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
@@ -210,7 +206,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.Notification", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
@@ -264,7 +259,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.NotificationPreference", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
@@ -311,7 +305,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.Permission", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
@@ -350,7 +343,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.RefreshToken", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
@@ -412,7 +404,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.Role", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
@@ -468,7 +459,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.SlaPolicy", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
@@ -514,7 +504,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.SlaTimer", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
@@ -566,7 +555,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.Tag", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
@@ -600,7 +588,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.Ticket", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<Guid?>("AssignedToId")
@@ -677,7 +664,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.TicketAttachment", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<string>("ContentType")
@@ -731,7 +717,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.TicketMessage", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<string>("Content")
@@ -774,7 +759,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.TicketStatusHistory", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<Guid>("ChangedById")
@@ -835,7 +819,6 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.User", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
