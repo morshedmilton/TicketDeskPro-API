@@ -44,6 +44,8 @@ public class TicketApiFactory : WebApplicationFactory<Program>
             // No Redis in tests.
             services.RemoveAll(typeof(ILoginRateLimiter));
             services.AddSingleton<ILoginRateLimiter, NoOpRateLimiter>();
+            services.RemoveAll(typeof(ICacheService));
+            services.AddSingleton<ICacheService, NoOpCacheService>();
         });
 
         builder.UseSetting("Storage:RootPath", StorageRoot);
@@ -66,6 +68,14 @@ public class TicketApiFactory : WebApplicationFactory<Program>
     }
 
     public AppDbContext CreateScopeDb() => throw new NotSupportedException("Resolve AppDbContext from a scoped provider instead.");
+}
+
+public class NoOpCacheService : ICacheService
+{
+    public Task<T?> GetAsync<T>(string key, CancellationToken ct = default) => Task.FromResult<T?>(default);
+    public Task SetAsync<T>(string key, T value, TimeSpan ttl, CancellationToken ct = default) => Task.CompletedTask;
+    public Task RemoveAsync(string key, CancellationToken ct = default) => Task.CompletedTask;
+    public Task RemoveByPrefixAsync(string prefix, CancellationToken ct = default) => Task.CompletedTask;
 }
 
 public class NoOpRateLimiter : ILoginRateLimiter
