@@ -67,6 +67,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISlaBreachRepository, EfSlaBreachRepository>();
         services.AddScoped<INotificationRepository, EfNotificationRepository>();
         services.AddScoped<ISlaTimerRepository, EfSlaTimerRepository>();
+        services.AddScoped<IDashboardRepository, EfDashboardRepository>();
+        services.AddScoped<IAuditLogRepository, EfAuditLogRepository>();
+        services.AddScoped<Application.Services.Admin.IPermissionLookup, EfPermissionLookup>();
+        services.AddScoped<Application.Interfaces.ICacheService, Services.RedisCacheService>();
 
         // --- Security services ---
         services.AddScoped<ITokenService, TokenService>();
