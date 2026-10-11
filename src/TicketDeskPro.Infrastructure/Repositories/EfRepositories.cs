@@ -57,6 +57,45 @@ public class EfUserRepository : IUserRepository
         _db.NotificationPreferences.AsNoTracking()
             .FirstOrDefaultAsync(p => p.UserId == userId, ct);
 
+    public Task<NotificationPreference?> GetNotificationPreferenceTrackedAsync(Guid userId, CancellationToken ct = default) =>
+        _db.NotificationPreferences.FirstOrDefaultAsync(p => p.UserId == userId, ct);
+
+    public async Task SetNotificationPreferenceAsync(NotificationPreference preference, CancellationToken ct = default) =>
+        await _db.NotificationPreferences.AddAsync(preference, ct);
+
+    public async Task<UserPage> GetPageAsync(string? search, string? roleName, int limit, string? cursor, CancellationToken ct = default)
+    {
+        var q = _db.Users.AsNoTracking().Include(u => u.UserRoles).ThenInclude(ur => ur.Role).AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = $"%{search.Trim().Replace("%", "\\%").Replace("_", "\\_")}%";
+            q = q.Where(u => EF.Functions.Like(u.Email, term, "\\") || EF.Functions.Like(u.FirstName, term, "\\") || EF.Functions.Like(u.LastName, term, "\\") || EF.Functions.Like(u.Phone ?? "", term, "\\"));
+        }
+        if (!string.IsNullOrWhiteSpace(roleName))
+            q = q.Where(u => u.UserRoles.Any(ur => ur.Role!.Name == roleName));
+
+        if (!string.IsNullOrEmpty(cursor) && EfTicketRepository.DecodeCursor(cursor, out var cursorDate, out var cursorId))
+            q = q.Where(u => u.CreatedAt < cursorDate || (u.CreatedAt == cursorDate && u.Id.CompareTo(cursorId) < 0));
+
+        var rows = await q.OrderByDescending(u => u.CreatedAt).ThenByDescending(u => u.Id)
+            .Take(limit + 1).ToListAsync(ct);
+        var hasMore = rows.Count > limit;
+        if (hasMore) rows.RemoveAt(rows.Count - 1);
+        var last = rows.LastOrDefault();
+        var next = hasMore && last is not null ? EfTicketRepository.EncodeCursor(last.CreatedAt, last.Id) : null;
+        return new UserPage(rows, next, hasMore);
+    }
+
+    public Task<User?> GetByIdWithRolesTrackedAsync(Guid id, bool includeDeleted = false, CancellationToken ct = default)
+    {
+        var q = WithRoles();
+        if (includeDeleted) q = q.IgnoreQueryFilters();
+        return q.FirstOrDefaultAsync(u => u.Id == id, ct);
+    }
+
+    public void Remove(User user) => _db.Users.Remove(user);
+
     private IQueryable<User> WithRoles() =>
         _db.Users
             .Include(u => u.UserRoles)
@@ -72,6 +111,25 @@ public class EfRoleRepository : IRoleRepository
 
     public Task<Role?> GetByNameAsync(string name, CancellationToken ct = default) =>
         _db.Roles.FirstOrDefaultAsync(r => r.Name == name, ct);
+
+    public async Task<IReadOnlyList<Role>> GetAllWithPermissionsAsync(CancellationToken ct = default) =>
+        await _db.Roles.AsNoTracking()
+            .Include(r => r.RolePermissions).ThenInclude(rp => rp.Permission)
+            .OrderBy(r => r.Name)
+            .ToListAsync(ct);
+
+    public Task<Role?> GetByIdWithPermissionsAsync(Guid id, CancellationToken ct = default) =>
+        _db.Roles
+            .Include(r => r.RolePermissions).ThenInclude(rp => rp.Permission)
+            .FirstOrDefaultAsync(r => r.Id == id, ct);
+
+    public Task<bool> NameExistsAsync(string name, Guid? excludeId, CancellationToken ct = default) =>
+        _db.Roles.AnyAsync(r => r.Name == name && r.Id != excludeId, ct);
+
+    public async Task AddAsync(Role role, CancellationToken ct = default) =>
+        await _db.Roles.AddAsync(role, ct);
+
+    public void Remove(Role role) => _db.Roles.Remove(role);
 }
 
 public class EfRefreshTokenRepository : IRefreshTokenRepository
