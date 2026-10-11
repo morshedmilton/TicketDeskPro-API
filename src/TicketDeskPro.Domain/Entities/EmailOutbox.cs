@@ -16,4 +16,7 @@ public class EmailOutbox : BaseEntity
     public int Attempts { get; set; }
     public string? LastError { get; set; }
     public DateTime? SentAt { get; set; }
+
+    /// <summary>Retry backoff: the processor only sends rows whose NextAttemptAt has passed.</summary>
+    public DateTime NextAttemptAt { get; set; } = DateTime.UtcNow;
 }
