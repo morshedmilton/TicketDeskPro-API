@@ -133,6 +133,9 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
+                    b.Property<DateTime>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime?>("SentAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -158,6 +161,8 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
 
                     b.HasIndex("Status")
                         .HasFilter("\"Status\" = 'Pending'");
+
+                    b.HasIndex("Status", "NextAttemptAt");
 
                     b.ToTable("EmailOutbox");
                 });
@@ -456,6 +461,51 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
                     b.ToTable("RolePermissions");
                 });
 
+            modelBuilder.Entity("TicketDeskPro.Domain.Entities.SlaBreach", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("BreachType")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("BreachedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DeletedById")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("EscalatedToPriority")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid?>("SlaTimerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SlaTimerId");
+
+                    b.HasIndex("TicketId", "BreachType")
+                        .IsUnique();
+
+                    b.ToTable("SlaBreaches");
+                });
+
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.SlaPolicy", b =>
                 {
                     b.Property<Guid>("Id")
@@ -496,7 +546,8 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("Priority")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("\"IsDeleted\" = FALSE");
 
                     b.ToTable("SlaPolicies");
                 });
@@ -529,6 +580,12 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
 
                     b.Property<bool>("IsResolutionBreached")
                         .HasColumnType("boolean");
+
+                    b.Property<bool>("IsWarningSent")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("PausedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTime>("ResolutionDeadline")
                         .HasColumnType("timestamp with time zone");
@@ -761,7 +818,7 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
-                    b.Property<Guid>("ChangedById")
+                    b.Property<Guid?>("ChangedById")
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
@@ -956,6 +1013,21 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
                     b.Navigation("Role");
                 });
 
+            modelBuilder.Entity("TicketDeskPro.Domain.Entities.SlaBreach", b =>
+                {
+                    b.HasOne("TicketDeskPro.Domain.Entities.SlaTimer", null)
+                        .WithMany("Breaches")
+                        .HasForeignKey("SlaTimerId");
+
+                    b.HasOne("TicketDeskPro.Domain.Entities.Ticket", "Ticket")
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Ticket");
+                });
+
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.SlaTimer", b =>
                 {
                     b.HasOne("TicketDeskPro.Domain.Entities.SlaPolicy", "SlaPolicy")
@@ -1044,8 +1116,7 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
                     b.HasOne("TicketDeskPro.Domain.Entities.User", "ChangedBy")
                         .WithMany()
                         .HasForeignKey("ChangedById")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.HasOne("TicketDeskPro.Domain.Entities.Ticket", "Ticket")
                         .WithMany("StatusHistory")
@@ -1116,6 +1187,11 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.SlaPolicy", b =>
                 {
                     b.Navigation("SlaTimers");
+                });
+
+            modelBuilder.Entity("TicketDeskPro.Domain.Entities.SlaTimer", b =>
+                {
+                    b.Navigation("Breaches");
                 });
 
             modelBuilder.Entity("TicketDeskPro.Domain.Entities.Tag", b =>
