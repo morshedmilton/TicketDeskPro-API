@@ -12,6 +12,8 @@ public static class ErrorCodes
     public const string UserNotFound = "RES_002";
     public const string CategoryNotFound = "RES_003";
     public const string ResSlaPolicyNotFound = "RES_004";
+    public const string RoleNotFound = "RES_005";
+    public const string TagNotFound = "RES_006";
     public const string Validation = "VAL_001";
     public const string FileTooLarge = "VAL_002";
     public const string InvalidFileType = "VAL_003";
@@ -21,6 +23,10 @@ public static class ErrorCodes
     public const string ConcurrencyConflict = "CPL_004";
     public const string TicketNotEditable = "CPL_005";
     public const string AttachmentNotAllowed = "CPL_006";
+    public const string NameExists = "CPL_007";
+    public const string SelfActionForbidden = "CPL_008";
+    public const string SystemRoleLocked = "CPL_009";
+    public const string ReferencedEntity = "CPL_010";
     public const string AuthRateLimited = "RAT_001";
     public const string ApiRateLimited = "RAT_002";
     public const string DatabaseTimeout = "SYS_001";
