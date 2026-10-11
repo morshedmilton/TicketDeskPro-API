@@ -323,6 +323,62 @@ flowchart LR
 
 Also in this phase: **manual ticket assignment** (`POST /tickets/{id}/assign`, claim-to-InProgress), **round-robin auto-assignment** to the least-loaded active agent on creation, and **SignalR hub** at `/hubs/notifications` (JWT via header or `?access_token=`).
 
+### 📊 Dashboard & Redis Cache-Aside (Phase 5)
+
+Dashboard numbers are expensive to compute, so they live in Redis for 30 seconds — and every ticket mutation deletes the cache so the next read is always fresh. Redis failing never breaks a request: reads fall through to the database, invalidations are skipped.
+
+```mermaid
+sequenceDiagram
+    participant C as Controller
+    participant S as DashboardService
+    participant R as Redis (TTL 30s)
+    participant DB as PostgreSQL
+
+    Note over C,DB: Read path — cache-aside
+    C->>S: GET /dashboard/kpis
+    S->>R: GET dash:kpis
+    alt cache hit
+        R-->>S: cached KPIs
+    else cache miss
+        S->>DB: aggregate queries
+        DB-->>S: raw numbers
+        S->>R: SET dash:kpis (30s)
+    end
+    S-->>C: KPIs
+
+    Note over C,DB: Write path — invalidation on every ticket mutation
+    C->>S: POST/PATCH /tickets...
+    S->>DB: commit business change
+    S->>R: delete dash:* (best-effort)
+    Note right of R: next read recomputes — stale data capped by invalidation, not just TTL
+```
+
+### 🏥 Liveness vs Readiness (Phase 5)
+
+Two probes, two questions: `/healthz` = "is the process alive?" (touches nothing). `/readyz` = "can it serve?" (pings PostgreSQL + Redis, answers 503 degraded when either is down). Plus structured logging: Serilog writes console + daily rolling files with the `CorrelationId` on every line.
+
+```mermaid
+flowchart LR
+    P["Platform probe"] --> L{"GET /healthz<br/>(liveness)"}
+    L -->|"process up"| OK1["200 healthy"]
+    L -->|"crashed"| DOWN1["connection refused"]
+    P --> R{"GET /readyz<br/>(readiness)"}
+    R --> DB{"Postgres<br/>answers?"}
+    DB -->|"Yes"| RD{"Redis<br/>answers?"}
+    DB -->|"No"| D503["503 degraded"]
+    RD -->|"Yes"| OK2["200 ready"]
+    RD -->|"No"| D503
+
+    classDef good fill:#D1FAE5,stroke:#059669,color:#064E3B
+    classDef bad fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D
+    classDef step fill:#DBEAFE,stroke:#3B82F6,color:#1E3A8A
+    class OK1,OK2 good
+    class DOWN1,D503 bad
+    class P,L,R,DB,RD step
+```
+
+Also in this phase: **admin panel endpoints** — user management (with BR-38 SuperAdmin guards and escalation protection), SuperAdmin role/permission builder (system roles locked), category & tag CRUD, filterable audit-log viewer, and per-user notification preferences.
+
 ## Database Schema
 
 20 tables, code-first via EF Core. Colors group the modules:
@@ -528,7 +584,7 @@ erDiagram
 | 2 | JWT auth, refresh-token rotation, RBAC | ✅ Shipped |
 | 3 | Ticket CRUD, state machine, messages, attachments, audit | ✅ Shipped |
 | 4 | SLA engine + notifications (Outbox, SignalR) | ✅ Shipped |
-| 5 | Dashboards & analytics (Redis KPIs, health checks) | ⬜ |
+| 5 | Dashboards & analytics (Redis KPIs, admin panel, health checks) | ✅ Shipped — backend complete |
 | 6 | Frontend auth & layout (`TicketDeskPro-Client`) | ⬜ |
 | 7 | Frontend tickets & dashboard UI | ⬜ |
 | 8 | Production deployment (Render + Vercel, CI/CD) | ⬜ |
