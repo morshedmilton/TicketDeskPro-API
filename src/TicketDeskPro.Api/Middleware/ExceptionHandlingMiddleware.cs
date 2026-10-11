@@ -66,6 +66,13 @@ public class ExceptionHandlingMiddleware
 
         BadHttpRequestException br => (400, [new ApiError(ErrorCodes.Validation, br.Message)]),
 
+        // A racing writer or duplicate insert is a client-visible conflict, not a server bug.
+        Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException => (409,
+            [new ApiError(ErrorCodes.ConcurrencyConflict, "The resource has been modified by another user.")]),
+
+        Microsoft.EntityFrameworkCore.DbUpdateException => (409,
+            [new ApiError(ErrorCodes.ConcurrencyConflict, "The resource was changed concurrently. Refresh and retry.")]),
+
         _ => (500, [new ApiError(ErrorCodes.Unexpected, "An unexpected error occurred.")])
     };
 }
