@@ -40,6 +40,12 @@ public static class DependencyInjection
 
         services.AddScoped<ITicketService, TicketService>();
         services.AddScoped<ISlaPolicyService, SlaPolicyService>();
+        services.AddScoped<Services.IDashboardService, Services.DashboardService>();
+        services.AddScoped<Services.Admin.IUserAdminService, Services.Admin.UserAdminService>();
+        services.AddScoped<Services.Admin.IRoleAdminService, Services.Admin.RoleAdminService>();
+        services.AddScoped<Services.Admin.ICategoryTagService, Services.Admin.CategoryTagService>();
+        services.AddScoped<Services.Admin.IAuditLogService, Services.Admin.AuditLogService>();
+        services.AddScoped<Services.Admin.INotificationPreferenceService, Services.Admin.NotificationPreferenceService>();
 
         // Domain event handlers (FRD §7.7) — one class handles the ticket lifecycle events.
         services.AddScoped<Services.Notifications.NotificationDispatcher>();
