@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TicketDeskPro.Domain.Entities;
+using TicketDeskPro.Domain.Enums;
 using TicketDeskPro.Domain.Interfaces;
 using TicketDeskPro.Infrastructure.Data;
 
@@ -33,6 +34,28 @@ public class EfUserRepository : IUserRepository
 
     public async Task AddAsync(User user, CancellationToken ct = default) =>
         await _db.Users.AddAsync(user, ct);
+
+    public async Task<IReadOnlyList<User>> GetActiveAgentsByLoadAsync(CancellationToken ct = default)
+    {
+        var agentRole = _db.Roles.First(r => r.Name == "Agent").Id;
+        return await _db.Users.AsNoTracking()
+            .Where(u => u.IsActive && u.UserRoles.Any(ur => ur.RoleId == agentRole))
+            .Select(u => new { User = u, OpenTickets = _db.Tickets.Count(t => t.AssignedToId == u.Id && t.Status != Domain.Enums.TicketStatus.Closed) })
+            .OrderBy(x => x.OpenTickets)          // least-loaded first = round-robin feel
+            .ThenBy(x => x.User.CreatedAt)
+            .Select(x => x.User)
+            .Take(50)
+            .ToListAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<User>> GetActiveByRoleAsync(string roleName, CancellationToken ct = default) =>
+        await _db.Users.AsNoTracking()
+            .Where(u => u.IsActive && u.UserRoles.Any(ur => ur.Role!.Name == roleName))
+            .ToListAsync(ct);
+
+    public Task<NotificationPreference?> GetNotificationPreferenceAsync(Guid userId, CancellationToken ct = default) =>
+        _db.NotificationPreferences.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.UserId == userId, ct);
 
     private IQueryable<User> WithRoles() =>
         _db.Users
@@ -120,4 +143,11 @@ public class EfEmailOutboxRepository : IEmailOutboxRepository
 
     public async Task AddAsync(EmailOutbox email, CancellationToken ct = default) =>
         await _db.EmailOutbox.AddAsync(email, ct);
+
+    public async Task<IReadOnlyList<EmailOutbox>> GetDuePendingAsync(DateTime now, int limit, CancellationToken ct = default) =>
+        await _db.EmailOutbox
+            .Where(o => o.Status == OutboxStatus.Pending && o.NextAttemptAt <= now)
+            .OrderBy(o => o.NextAttemptAt)
+            .Take(limit)
+            .ToListAsync(ct);
 }
