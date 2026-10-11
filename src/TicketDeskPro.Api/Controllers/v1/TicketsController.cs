@@ -74,6 +74,14 @@ public class TicketsController : ControllerBase
     public async Task<IActionResult> ChangeStatus(Guid id, TicketStatusChangeRequest request, CancellationToken ct) =>
         TicketWithEtag(StatusCodes.Status200OK, await _tickets.ChangeStatusAsync(id, request, ReadIfMatch(), ct));
 
+    // ---------- assignment (Epic 6) ----------
+
+    /// <summary>Manual assignment (US-6.01). Assign yourself to claim an unassigned ticket.</summary>
+    [HttpPost("{id:guid}/assign")]
+    [RequirePermission(AppPermissions.TicketsAssign)]
+    public async Task<IActionResult> Assign(Guid id, TicketAssignRequest request, CancellationToken ct) =>
+        TicketWithEtag(StatusCodes.Status200OK, await _tickets.AssignAsync(id, request, ReadIfMatch(), ct));
+
     // ---------- message thread ----------
 
     [HttpGet("{ticketId:guid}/messages")]
