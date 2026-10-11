@@ -1,6 +1,7 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
+using TicketDeskPro.Application.Interfaces;
 using TicketDeskPro.Domain.Entities;
 using TicketDeskPro.Domain.Enums;
 using TicketDeskPro.Domain.Interfaces;
@@ -9,7 +10,13 @@ namespace TicketDeskPro.Infrastructure.Data;
 
 public class AppDbContext : DbContext
 {
-    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+    private readonly IDomainEventDispatcher? _domainEventDispatcher;
+
+    public AppDbContext(DbContextOptions<AppDbContext> options, IDomainEventDispatcher? domainEventDispatcher = null)
+        : base(options)
+    {
+        _domainEventDispatcher = domainEventDispatcher;
+    }
 
     // Identity & Access
     public DbSet<User> Users => Set<User>();
@@ -32,6 +39,7 @@ public class AppDbContext : DbContext
     // SLA
     public DbSet<SlaPolicy> SlaPolicies => Set<SlaPolicy>();
     public DbSet<SlaTimer> SlaTimers => Set<SlaTimer>();
+    public DbSet<SlaBreach> SlaBreaches => Set<SlaBreach>();
 
     // Audit & Infrastructure
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
@@ -60,10 +68,29 @@ public class AppDbContext : DbContext
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
-    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// FRD §7.7: domain events are dispatched AFTER the transaction commits, so
+    /// handlers (notifications, emails, SignalR) can rely on the data being durable.
+    /// ponytail: the sync SaveChanges path does not dispatch — everything is async here.
+    /// </summary>
+    public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         SetUpdatedAt();
-        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        var result = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+
+        var events = ChangeTracker.Entries<BaseEntity>()
+            .SelectMany(e => e.Entity.DomainEvents)
+            .ToList();
+        if (events.Count > 0)
+        {
+            foreach (var entry in ChangeTracker.Entries<BaseEntity>())
+                entry.Entity.ClearDomainEvents();
+
+            if (_domainEventDispatcher is not null)
+                await _domainEventDispatcher.DispatchAsync(events, cancellationToken);
+        }
+
+        return result;
     }
 
     private void SetUpdatedAt()
@@ -269,7 +296,7 @@ public class AppDbContext : DbContext
             builder.HasOne(h => h.Ticket).WithMany(t => t.StatusHistory)
                 .HasForeignKey(h => h.TicketId).OnDelete(DeleteBehavior.Cascade);
             builder.HasOne(h => h.ChangedBy).WithMany()
-                .HasForeignKey(h => h.ChangedById).OnDelete(DeleteBehavior.Restrict);
+                .HasForeignKey(h => h.ChangedById).OnDelete(DeleteBehavior.SetNull);
             builder.HasIndex(h => h.TicketId);
         });
 
@@ -293,8 +320,10 @@ public class AppDbContext : DbContext
         {
             builder.Property(p => p.Name).HasMaxLength(100).IsRequired();
 
-            // One policy per priority.
-            builder.HasIndex(p => p.Priority).IsUnique();
+            // One LIVE policy per priority — soft-deleted policies keep their slot
+            // out of the index so a priority can be recreated after deletion.
+            builder.HasIndex(p => p.Priority).IsUnique()
+                .HasFilter("\"IsDeleted\" = FALSE");
         });
 
         modelBuilder.Entity<SlaTimer>(builder =>
@@ -306,6 +335,17 @@ public class AppDbContext : DbContext
                 .HasForeignKey<SlaTimer>(t => t.TicketId).OnDelete(DeleteBehavior.Cascade);
             builder.HasOne(t => t.SlaPolicy).WithMany(p => p.SlaTimers)
                 .HasForeignKey(t => t.SlaPolicyId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<SlaBreach>(builder =>
+        {
+            builder.Property(b => b.BreachType).HasConversion<int>();
+
+            builder.HasOne(b => b.Ticket).WithMany()
+                .HasForeignKey(b => b.TicketId).OnDelete(DeleteBehavior.Cascade);
+
+            // One row per breach type per ticket.
+            builder.HasIndex(b => new { b.TicketId, b.BreachType }).IsUnique();
         });
     }
 
@@ -332,6 +372,9 @@ public class AppDbContext : DbContext
             builder.Property(o => o.Subject).HasMaxLength(200).IsRequired();
             builder.Property(o => o.Status).HasMaxLength(20).HasConversion<string>().IsRequired();
             builder.Property(o => o.LastError).HasMaxLength(1000);
+
+            // Outbox processor backoff: only pick rows whose NextAttemptAt has passed.
+            builder.HasIndex(o => new { o.Status, o.NextAttemptAt });
 
             // The outbox processor polls pending rows constantly.
             builder.HasIndex(o => o.Status)
