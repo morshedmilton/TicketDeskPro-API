@@ -27,10 +27,28 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
+// Real-time: SignalR hub + the Application-facing notifier (Phase 4).
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<IRealtimeNotifier, TicketDeskPro.Api.Services.SignalRRealtimeNotifier>();
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
-        options.MapInboundClaims = false; // we emit/consume literal claim names: sub, email, role, permission
+        options.MapInboundClaims = false; // we emit/consume literal claim names: sub, email, role, permissions
+
+        // Browsers cannot set an Authorization header on a WebSocket handshake —
+        // the SignalR JS client sends the token as ?access_token= on /hubs/*.
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                if (!string.IsNullOrEmpty(accessToken) && context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                    context.Token = accessToken;
+                return Task.CompletedTask;
+            }
+        };
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -94,6 +112,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<TicketDeskPro.Api.Hubs.NotificationHub>("/hubs/notifications");
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", time = DateTime.UtcNow }));
 
 app.Run();
