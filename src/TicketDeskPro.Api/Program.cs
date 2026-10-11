@@ -73,6 +73,15 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 builder.Services.AddAuthorization();
 
+// CORS: the browser client (Vercel/localhost:3000) is cross-origin — without this
+// every axios call and the SignalR negotiate POST dies in preflight.
+var frontendUrl = builder.Configuration["FRONTEND_URL"] ?? "http://localhost:3000";
+builder.Services.AddCors(options => options.AddPolicy("frontend", policy => policy
+    .WithOrigins(frontendUrl)
+    .AllowAnyHeader()
+    .AllowAnyMethod()
+    .AllowCredentials()));
+
 builder.Services.AddControllers().AddJsonOptions(o =>
     o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
@@ -116,6 +125,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseCors("frontend");
 app.UseAuthentication();
 app.UseAuthorization();
 
