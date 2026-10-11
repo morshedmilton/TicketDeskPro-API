@@ -226,4 +226,101 @@ public class EfSlaPolicyRepository : ISlaPolicyRepository
 
     public Task<SlaPolicy?> GetByPriorityAsync(int priority, CancellationToken ct = default) =>
         _db.SlaPolicies.FirstOrDefaultAsync(p => (int)p.Priority == priority && p.IsActive, ct);
+
+    public Task<SlaPolicy?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+        _db.SlaPolicies.FirstOrDefaultAsync(p => p.Id == id, ct);
+
+    public async Task<IReadOnlyList<SlaPolicy>> GetAllAsync(CancellationToken ct = default) =>
+        await _db.SlaPolicies.AsNoTracking().OrderBy(p => p.Priority).ToListAsync(ct);
+
+    public Task<bool> PriorityExistsAsync(int priority, Guid? excludeId, CancellationToken ct = default) =>
+        _db.SlaPolicies.AnyAsync(p => (int)p.Priority == priority && p.Id != excludeId, ct);
+
+    public async Task AddAsync(SlaPolicy policy, CancellationToken ct = default) =>
+        await _db.SlaPolicies.AddAsync(policy, ct);
+
+    public void Remove(SlaPolicy policy) => _db.SlaPolicies.Remove(policy);
+}
+
+public class EfSlaBreachRepository : ISlaBreachRepository
+{
+    private readonly AppDbContext _db;
+    public EfSlaBreachRepository(AppDbContext db) => _db = db;
+
+    public async Task AddAsync(SlaBreach breach, CancellationToken ct = default) =>
+        await _db.SlaBreaches.AddAsync(breach, ct);
+}
+
+public class EfNotificationRepository : INotificationRepository
+{
+    private readonly AppDbContext _db;
+    public EfNotificationRepository(AppDbContext db) => _db = db;
+
+    public async Task AddAsync(Notification notification, CancellationToken ct = default) =>
+        await _db.Notifications.AddAsync(notification, ct);
+
+    public async Task<IReadOnlyList<Notification>> GetRecentForUserAsync(Guid userId, int limit, CancellationToken ct = default) =>
+        await _db.Notifications.AsNoTracking()
+            .Where(n => n.UserId == userId)
+            .OrderByDescending(n => n.CreatedAt)
+            .Take(limit)
+            .ToListAsync(ct);
+}
+
+public class EfSlaTimerRepository : ISlaTimerRepository
+{
+    private readonly AppDbContext _db;
+    public EfSlaTimerRepository(AppDbContext db) => _db = db;
+
+    public async Task<IReadOnlyList<SlaTimer>> GetDueFirstResponseAsync(DateTime now, int limit, CancellationToken ct = default) =>
+        await _db.SlaTimers
+            .Include(t => t.Ticket).ThenInclude(t => t!.AssignedTo)
+            // Closed tickets can no longer produce a first response — no breach after close.
+            .Where(t => t.FirstResponseAt == null && !t.IsFirstResponseBreached
+                        && t.FirstResponseDeadline < now
+                        && t.Ticket!.Status != TicketStatus.Closed)
+            .Take(limit)
+            .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<SlaTimer>> GetDueResolutionAsync(DateTime now, int limit, CancellationToken ct = default) =>
+        await _db.SlaTimers
+            .Include(t => t.Ticket).ThenInclude(t => t!.AssignedTo)
+            // Only OPEN work can breach: resolved/closed tickets met the commitment, and
+            // paused timers get their deadline pushed forward on resume (BR-031).
+            .Where(t => !t.IsResolutionBreached && t.ResolutionDeadline < now
+                        && t.PausedAt == null
+                        && t.Ticket!.Status != TicketStatus.Resolved
+                        && t.Ticket!.Status != TicketStatus.Closed)
+            .Take(limit)
+            .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<SlaTimer>> GetWarningDueAsync(DateTime now, double warningRatio, int limit, CancellationToken ct = default)
+    {
+        // Server-side: still-open first-response windows only. The 75%-elapsed math
+        // depends on a per-row policy value, so the final cut is computed in memory
+        // on a small deadline-ordered batch.
+        var candidates = await _db.SlaTimers
+            .Include(t => t.Ticket).ThenInclude(t => t!.AssignedTo)
+            .Include(t => t.SlaPolicy)
+            // First response never pauses (BR-031 pauses only the resolution timer).
+            .Where(t => !t.IsWarningSent && t.FirstResponseAt == null
+                        && !t.IsFirstResponseBreached
+                        && t.FirstResponseDeadline > now)
+            .OrderBy(t => t.FirstResponseDeadline)
+            .Take(limit)
+            .ToListAsync(ct);
+
+        // Threshold from the SNAPSHOT (deadline), not the live policy value —
+        // policies may be edited after the timer was armed.
+        return candidates
+            .Where(t => now >= t.CreatedAt + (t.FirstResponseDeadline - t.CreatedAt) * warningRatio)
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<Ticket>> GetStaleResolvedAsync(DateTime resolvedBefore, int limit, CancellationToken ct = default) =>
+        await _db.Tickets
+            .Where(t => t.Status == TicketStatus.Resolved
+                        && !_db.TicketStatusHistories.Any(h => h.TicketId == t.Id && h.ToStatus == TicketStatus.Resolved && h.CreatedAt > resolvedBefore))
+            .Take(limit)
+            .ToListAsync(ct);
 }
