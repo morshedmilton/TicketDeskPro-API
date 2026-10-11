@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using TicketDeskPro.Application.Interfaces;
 using TicketDeskPro.Domain.Interfaces;
 
 namespace TicketDeskPro.Infrastructure.Interceptors;
@@ -11,10 +12,14 @@ namespace TicketDeskPro.Infrastructure.Interceptors;
 /// </summary>
 public class SoftDeleteInterceptor : SaveChangesInterceptor
 {
+    private readonly ICurrentUserService _currentUser;
+
+    public SoftDeleteInterceptor(ICurrentUserService currentUser) => _currentUser = currentUser;
+
     public override InterceptionResult<int> SavingChanges(
         DbContextEventData eventData, InterceptionResult<int> result)
     {
-        ConvertDeletesToSoftDeletes(eventData.Context);
+        ConvertDeletesToSoftDeletes(eventData.Context, _currentUser.UserId);
         return base.SavingChanges(eventData, result);
     }
 
@@ -22,11 +27,11 @@ public class SoftDeleteInterceptor : SaveChangesInterceptor
         DbContextEventData eventData, InterceptionResult<int> result,
         CancellationToken cancellationToken = default)
     {
-        ConvertDeletesToSoftDeletes(eventData.Context);
+        ConvertDeletesToSoftDeletes(eventData.Context, _currentUser.UserId);
         return base.SavingChangesAsync(eventData, result, cancellationToken);
     }
 
-    private static void ConvertDeletesToSoftDeletes(DbContext? context)
+    private static void ConvertDeletesToSoftDeletes(DbContext? context, Guid? currentUserId)
     {
         if (context is null) return;
 
@@ -37,7 +42,7 @@ public class SoftDeleteInterceptor : SaveChangesInterceptor
             entry.State = EntityState.Modified;
             entry.Entity.IsDeleted = true;
             entry.Entity.DeletedAt = DateTime.UtcNow;
-            // DeletedById is set by the application layer once current-user lookup exists (Phase 2).
+            entry.Entity.DeletedById = currentUserId; // US-2.07: who deleted it, on the row itself
         }
     }
 }
