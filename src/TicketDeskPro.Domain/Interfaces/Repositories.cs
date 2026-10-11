@@ -18,6 +18,10 @@ public interface IUserRepository
     Task<bool> AnyByEmailAsync(string email, CancellationToken ct = default);
     Task<User?> GetByPasswordResetHashAsync(string tokenHash, CancellationToken ct = default);
     Task AddAsync(User user, CancellationToken ct = default);
+    /// <summary>Active users holding the Agent role (assignment pool), ordered by open-ticket load.</summary>
+    Task<IReadOnlyList<User>> GetActiveAgentsByLoadAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<User>> GetActiveByRoleAsync(string roleName, CancellationToken ct = default);
+    Task<NotificationPreference?> GetNotificationPreferenceAsync(Guid userId, CancellationToken ct = default);
 }
 
 public interface IRoleRepository
@@ -49,6 +53,7 @@ public interface ILoginAttemptRepository
 public interface IEmailOutboxRepository
 {
     Task AddAsync(EmailOutbox email, CancellationToken ct = default);
+    Task<IReadOnlyList<EmailOutbox>> GetDuePendingAsync(DateTime now, int limit, CancellationToken ct = default);
 }
 
 /// <summary>Cursor page of tickets plus the cursor for the next page (null = no more).</summary>
@@ -97,4 +102,29 @@ public interface ITagRepository
 public interface ISlaPolicyRepository
 {
     Task<SlaPolicy?> GetByPriorityAsync(int priority, CancellationToken ct = default);
+    Task<SlaPolicy?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    Task<IReadOnlyList<SlaPolicy>> GetAllAsync(CancellationToken ct = default);
+    Task<bool> PriorityExistsAsync(int priority, Guid? excludeId, CancellationToken ct = default);
+    Task AddAsync(SlaPolicy policy, CancellationToken ct = default);
+    void Remove(SlaPolicy policy);
 }
+
+public interface ISlaBreachRepository
+{
+    Task AddAsync(SlaBreach breach, CancellationToken ct = default);
+}
+
+public interface INotificationRepository
+{
+    Task AddAsync(Notification notification, CancellationToken ct = default);
+    Task<IReadOnlyList<Notification>> GetRecentForUserAsync(Guid userId, int limit, CancellationToken ct = default);
+}
+
+public interface ISlaTimerRepository
+{
+    Task<IReadOnlyList<SlaTimer>> GetDueFirstResponseAsync(DateTime now, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<SlaTimer>> GetDueResolutionAsync(DateTime now, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<SlaTimer>> GetWarningDueAsync(DateTime now, double warningRatio, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<Ticket>> GetStaleResolvedAsync(DateTime resolvedBefore, int limit, CancellationToken ct = default);
+}
+
