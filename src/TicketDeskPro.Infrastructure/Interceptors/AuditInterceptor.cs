@@ -37,7 +37,7 @@ public class AuditInterceptor : SaveChangesInterceptor
     /// (every login/refresh/email-poll writes one). Business entities stay audited.</summary>
     private static readonly Type[] NotAuditedEntityTypes =
     [
-        typeof(AuditLog), typeof(LoginAttempt), typeof(RefreshToken), typeof(EmailOutbox)
+        typeof(AuditLog), typeof(LoginAttempt), typeof(RefreshToken), typeof(EmailOutbox), typeof(Notification)
     ];
 
     private void Collect(DbContext? context)
