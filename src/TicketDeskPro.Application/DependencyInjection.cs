@@ -39,6 +39,14 @@ public static class DependencyInjection
             frontendUrl));
 
         services.AddScoped<ITicketService, TicketService>();
+        services.AddScoped<ISlaPolicyService, SlaPolicyService>();
+
+        // Domain event handlers (FRD §7.7) — one class handles the ticket lifecycle events.
+        services.AddScoped<Services.Notifications.NotificationDispatcher>();
+        services.AddScoped<IEventHandler<Domain.Events.TicketCreatedEvent>>(sp => sp.GetRequiredService<Services.Notifications.NotificationDispatcher>());
+        services.AddScoped<IEventHandler<Domain.Events.TicketStatusChangedEvent>>(sp => sp.GetRequiredService<Services.Notifications.NotificationDispatcher>());
+        services.AddScoped<IEventHandler<Domain.Events.TicketAssignedEvent>>(sp => sp.GetRequiredService<Services.Notifications.NotificationDispatcher>());
+        services.AddScoped<IEventHandler<Domain.Events.TicketMessageAddedEvent>>(sp => sp.GetRequiredService<Services.Notifications.NotificationDispatcher>());
 
         return services;
     }
