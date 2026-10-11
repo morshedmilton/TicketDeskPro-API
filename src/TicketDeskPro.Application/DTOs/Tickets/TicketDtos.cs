@@ -10,6 +10,8 @@ public record TicketUpdateRequest(string Title, string Description, TicketPriori
 
 public record TicketStatusChangeRequest(TicketStatus Status, string? Reason = null);
 
+public record TicketAssignRequest(Guid AssignedToId);
+
 public record TicketListQuery(
     int Limit = 20,
     string? Cursor = null,
@@ -39,6 +41,15 @@ public record TicketSummaryDto(
     DateTime CreatedAt,
     DateTime UpdatedAt);
 
+/// <summary>SLA state embedded in the ticket detail (US-2.04 / US-5.03 visual badge).</summary>
+public record SlaSummaryDto(
+    DateTime FirstResponseDeadline,
+    DateTime ResolutionDeadline,
+    bool IsPaused,
+    bool IsFirstResponseBreached,
+    bool IsResolutionBreached,
+    DateTime? FirstResponseAt);
+
 public record TicketDetailDto(
     Guid Id,
     string TicketNumber,
@@ -53,6 +64,7 @@ public record TicketDetailDto(
     Guid? AssignedToId,
     string? AssignedToName,
     IReadOnlyList<string> Tags,
+    SlaSummaryDto? Sla,
     uint Etag,
     DateTime CreatedAt,
     DateTime UpdatedAt);
