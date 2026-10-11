@@ -38,6 +38,8 @@ public static class DependencyInjection
             sp.GetRequiredService<IOptions<JwtSettings>>(),
             frontendUrl));
 
+        services.AddScoped<ITicketService, TicketService>();
+
         return services;
     }
 }
