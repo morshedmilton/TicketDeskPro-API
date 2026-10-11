@@ -208,6 +208,20 @@ public class EfCategoryRepository : ICategoryRepository
 
     public async Task<IReadOnlyList<Category>> GetAllActiveAsync(CancellationToken ct = default) =>
         await _db.Categories.AsNoTracking().Where(c => c.IsActive).OrderBy(c => c.Name).ToListAsync(ct);
+
+    public async Task<IReadOnlyList<Category>> GetAllAsync(CancellationToken ct = default) =>
+        await _db.Categories.AsNoTracking().OrderBy(c => c.Name).ToListAsync(ct);
+
+    public Task<bool> NameExistsAsync(string name, Guid? excludeId, CancellationToken ct = default) =>
+        _db.Categories.AnyAsync(c => c.Name == name && c.Id != excludeId, ct);
+
+    public Task<bool> IsReferencedByTicketsAsync(Guid categoryId, CancellationToken ct = default) =>
+        _db.Tickets.IgnoreQueryFilters().AnyAsync(t => t.CategoryId == categoryId, ct);
+
+    public async Task AddAsync(Category category, CancellationToken ct = default) =>
+        await _db.Categories.AddAsync(category, ct);
+
+    public void Remove(Category category) => _db.Categories.Remove(category);
 }
 
 public class EfTagRepository : ITagRepository
@@ -217,6 +231,23 @@ public class EfTagRepository : ITagRepository
 
     public async Task<IReadOnlyList<Tag>> GetByIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct = default) =>
         await _db.Tags.Where(t => ids.Contains(t.Id)).ToListAsync(ct);
+
+    public async Task<IReadOnlyList<Tag>> GetAllAsync(CancellationToken ct = default) =>
+        await _db.Tags.AsNoTracking().OrderBy(t => t.Name).ToListAsync(ct);
+
+    public Task<Tag?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+        _db.Tags.FirstOrDefaultAsync(t => t.Id == id, ct);
+
+    public Task<bool> NameExistsAsync(string name, Guid? excludeId, CancellationToken ct = default) =>
+        _db.Tags.AnyAsync(t => t.Name == name && t.Id != excludeId, ct);
+
+    public Task<bool> IsReferencedByTicketsAsync(Guid tagId, CancellationToken ct = default) =>
+        _db.TicketTags.AnyAsync(tt => tt.TagId == tagId, ct);
+
+    public async Task AddAsync(Tag tag, CancellationToken ct = default) =>
+        await _db.Tags.AddAsync(tag, ct);
+
+    public void Remove(Tag tag) => _db.Tags.Remove(tag);
 }
 
 public class EfSlaPolicyRepository : ISlaPolicyRepository
