@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TicketDeskPro.Infrastructure.Data;
+using TicketDeskPro.Domain.Enums;
 using Xunit;
 
 namespace TicketDeskPro.IntegrationTests;
@@ -276,5 +277,121 @@ public class TicketApiTests : IClassFixture<TicketApiFactory>
         Assert.NotNull(log);
         Assert.NotNull(log!.AfterJson); // BR-023 after-snapshot
         Assert.Contains("Cannot login", log!.AfterJson);
+    }
+
+    // ---------------- Phase 4: SLA policies, assignment, notifications ----------------
+
+    [Fact]
+    public async Task Admin_SLA_policy_crud_roundtrip_and_agent_forbidden()
+    {
+        var admin = await ClientForAsync("admin@ticketdesk.dev");
+        var agent = await ClientForAsync("agent@ticketdesk.dev");
+
+        // agent cannot manage policies
+        Assert.Equal(HttpStatusCode.Forbidden, (await agent.PostAsJsonAsync("/api/v1/admin/sla-policies",
+            new { name = "Nope", priority = "Low", firstResponseMinutes = 1, resolutionMinutes = 2 }, Json)).StatusCode);
+
+        // seeded policies own all four priorities — a duplicate priority must conflict
+        Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsJsonAsync("/api/v1/admin/sla-policies",
+            new { name = "Dupe", priority = "Low", firstResponseMinutes = 100, resolutionMinutes = 200 }, Json)).StatusCode);
+
+        // update the seeded Low policy
+        var list1 = await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/sla-policies", Json);
+        var lowId = list1.GetProperty("data").EnumerateArray()
+            .First(p => p.GetProperty("priority").GetString() == "Low").GetProperty("id").GetString()!;
+
+        var update = await admin.PutAsJsonAsync($"/api/v1/admin/sla-policies/{lowId}",
+            new { name = "Updated Low SLA", firstResponseMinutes = 110, resolutionMinutes = 210, isActive = true }, Json);
+        Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+
+        var list2 = await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/sla-policies", Json);
+        Assert.Contains(list2.GetProperty("data").EnumerateArray(), p => p.GetProperty("name").GetString() == "Updated Low SLA");
+
+        // delete frees the priority, so the same create now succeeds
+        Assert.Equal(HttpStatusCode.OK, (await admin.DeleteAsync($"/api/v1/admin/sla-policies/{lowId}")).StatusCode);
+        var create = await admin.PostAsJsonAsync("/api/v1/admin/sla-policies",
+            new { name = "Fresh Low SLA", priority = "Low", firstResponseMinutes = 100, resolutionMinutes = 200 }, Json);
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+    }
+
+    [Fact]
+    public async Task Ticket_is_auto_assigned_on_create_and_can_be_reassigned()
+    {
+        var customer = await ClientForAsync("customer@ticketdesk.dev");
+        var agent = await ClientForAsync("agent@ticketdesk.dev");
+
+        var categories = await GetCategoriesAsync(customer);
+        var create = await customer.PostAsJsonAsync("/api/v1/tickets", new
+        {
+            title = "Auto assign probe ticket",
+            description = "A perfectly valid ticket description body.",
+            priority = "High",
+            categoryId = categories
+        }, Json);
+        var (created, etag) = (await ReadAsync(create));
+        var id = created.GetProperty("id").GetString()!;
+        Assert.NotNull(created.GetProperty("assignedToId").GetString()); // US-6.02 round-robin
+
+        // reassign to admin (agents hold tickets.assign)
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var adminId = (await db.Users.FirstAsync(u => u.Email == "admin@ticketdesk.dev")).Id;
+
+        var assign = await agent.PostAsJsonAsync($"/api/v1/tickets/{id}/assign", new { assignedToId = adminId }, Json);
+        Assert.Equal(HttpStatusCode.OK, assign.StatusCode);
+        var (after, _) = await ReadAsync(assign);
+        Assert.Equal(adminId.ToString(), after.GetProperty("assignedToId").GetString());
+
+        // customer lacks tickets.assign
+        Assert.Equal(HttpStatusCode.Forbidden, (await customer.PostAsJsonAsync($"/api/v1/tickets/{id}/assign",
+            new { assignedToId = adminId }, Json)).StatusCode);
+    }
+
+    [Fact]
+    public async Task AwaitingCustomer_pauses_the_SLA_timer_and_customer_reply_resumes_it()
+    {
+        var agent = await ClientForAsync("agent@ticketdesk.dev");
+        var customer = await ClientForAsync("customer@ticketdesk.dev");
+        var (id, _, _) = await CreateTicketAsync(customer);
+
+        await agent.PatchAsJsonAsync($"/api/v1/tickets/{id}/status", new { status = "InProgress" }, Json);
+        await agent.PatchAsJsonAsync($"/api/v1/tickets/{id}/status", new { status = "AwaitingCustomer" }, Json);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var timer = await db.SlaTimers.FirstAsync(t => t.TicketId == Guid.Parse(id));
+            Assert.NotNull(timer.PausedAt); // BR-031
+        }
+
+        var deadlineBefore = Guid.Parse(id);
+        await customer.PatchAsJsonAsync($"/api/v1/tickets/{id}/status", new { status = "CustomerReplied" }, Json);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var timer = await db.SlaTimers.FirstAsync(t => t.TicketId == deadlineBefore);
+            Assert.Null(timer.PausedAt); // BR-032 resumed
+        }
+    }
+
+    [Fact]
+    public async Task Ticket_creation_queues_customer_email_and_notifies_assigned_agent()
+    {
+        var customer = await ClientForAsync("customer@ticketdesk.dev");
+        var (id, number, _) = await CreateTicketAsync(customer);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // customer got a "we received your ticket" email through the outbox
+        Assert.Contains(await db.EmailOutbox.IgnoreQueryFilters().ToListAsync(),
+            o => o.ToEmail == "customer@ticketdesk.dev" && o.Subject.Contains(number));
+
+        // the round-robin assignee got an in-app notification
+        var ticket = await db.Tickets.IgnoreQueryFilters().FirstAsync(t => t.Id == Guid.Parse(id));
+        Assert.NotNull(ticket.AssignedToId);
+        Assert.Contains(await db.Notifications.IgnoreQueryFilters().ToListAsync(),
+            n => n.UserId == ticket.AssignedToId && n.Type == Domain.Enums.NotificationType.TicketAssigned);
     }
 }
