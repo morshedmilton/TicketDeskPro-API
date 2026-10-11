@@ -100,7 +100,8 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("Name")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("\"IsDeleted\" = FALSE");
 
                     b.ToTable("Categories");
                 });
@@ -441,7 +442,8 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("Name")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("\"IsDeleted\" = FALSE");
 
                     b.ToTable("Roles");
                 });
@@ -637,7 +639,8 @@ namespace TicketDeskPro.Infrastructure.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("Name")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("\"IsDeleted\" = FALSE");
 
                     b.ToTable("Tags");
                 });
