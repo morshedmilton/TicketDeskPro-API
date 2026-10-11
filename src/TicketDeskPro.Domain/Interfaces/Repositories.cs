@@ -50,3 +50,51 @@ public interface IEmailOutboxRepository
 {
     Task AddAsync(EmailOutbox email, CancellationToken ct = default);
 }
+
+/// <summary>Cursor page of tickets plus the cursor for the next page (null = no more).</summary>
+public record TicketPage(IReadOnlyList<Ticket> Items, string? NextCursor, bool HasMore);
+
+public interface ITicketRepository
+{
+    Task<Ticket?> GetByIdAsync(Guid id, bool includeDetails, bool includeDeleted, CancellationToken ct = default);
+    Task<TicketPage> GetPageAsync(int limit, string? cursor, string? search, int? status, int? priority,
+        Guid? categoryId, Guid? assignedToId, Guid? createdByUserId, bool onlyDeleted, string? sort, string? order, CancellationToken ct = default);
+    Task AddAsync(Ticket ticket, CancellationToken ct = default);
+    void Remove(Ticket ticket);
+    Task<int> CountLiveAsync(CancellationToken ct = default);
+    Task<bool> TicketNumberExistsAsync(string ticketNumber, CancellationToken ct = default);
+    Task<DateTime?> GetLastResolvedAtAsync(Guid ticketId, CancellationToken ct = default);
+}
+
+public interface ITicketMessageRepository
+{
+    Task<TicketMessage?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    /// <summary>Returns up to limit+1 messages (ascending) so the caller can derive hasMore.</summary>
+    Task<IReadOnlyList<TicketMessage>> GetThreadAsync(Guid ticketId, int limit, string? cursor, bool includeInternal, CancellationToken ct = default);
+    Task AddAsync(TicketMessage message, CancellationToken ct = default);
+}
+
+public interface ITicketAttachmentRepository
+{
+    Task<TicketAttachment?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    Task<IReadOnlyList<TicketAttachment>> GetByTicketAsync(Guid ticketId, CancellationToken ct = default);
+    Task<int> CountByTicketAsync(Guid ticketId, CancellationToken ct = default);
+    Task AddAsync(TicketAttachment attachment, CancellationToken ct = default);
+    void Remove(TicketAttachment attachment);
+}
+
+public interface ICategoryRepository
+{
+    Task<Category?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    Task<IReadOnlyList<Category>> GetAllActiveAsync(CancellationToken ct = default);
+}
+
+public interface ITagRepository
+{
+    Task<IReadOnlyList<Tag>> GetByIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct = default);
+}
+
+public interface ISlaPolicyRepository
+{
+    Task<SlaPolicy?> GetByPriorityAsync(int priority, CancellationToken ct = default);
+}
