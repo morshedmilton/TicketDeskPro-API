@@ -75,7 +75,8 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await db.Database.MigrateAsync();
+    if (db.Database.IsRelational()) // integration tests swap in InMemory, which has no migrations
+        await db.Database.MigrateAsync();
     await DbSeeder.SeedAsync(db, includeDemoUsers: app.Environment.IsDevelopment());
 }
 
@@ -96,3 +97,6 @@ app.MapControllers();
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", time = DateTime.UtcNow }));
 
 app.Run();
+
+/// <summary>Exposes the implicit Program class to WebApplicationFactory in integration tests.</summary>
+public partial class Program { }
