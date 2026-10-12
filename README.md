@@ -1,6 +1,13 @@
 # TicketDeskPro-API
 
+[![CI](https://github.com/morshedmilton/TicketDeskPro-API/actions/workflows/ci.yml/badge.svg)](https://github.com/morshedmilton/TicketDeskPro-API/actions/workflows/ci.yml)
+![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1)
+![License](https://img.shields.io/badge/license-private-lightgrey)
+
 Enterprise Support Ticketing & SLA Platform — backend API built with **ASP.NET Core 10**, **EF Core 10**, **PostgreSQL**, **Redis** and **SignalR**.
+
+🚀 **Live:** https://ticketdeskpro-api.onrender.com · Swagger: https://ticketdeskpro-api.onrender.com/swagger · Frontend: https://ticketdeskpro-client.vercel.app
 
 ## Architecture
 
@@ -587,7 +594,7 @@ erDiagram
 | 5 | Dashboards & analytics (Redis KPIs, admin panel, health checks) | ✅ Shipped — backend complete |
 | 6 | Frontend auth & layout (`TicketDeskPro-Client`) | ✅ Shipped |
 | 7 | Frontend tickets & dashboard UI | ✅ Shipped |
-| 8 | Production deployment (Render + Vercel, CI/CD) | ⬜ |
+| 8 | Production deployment (Render + Vercel, CI/CD) | ✅ Shipped |
 
 ## Prerequisites
 
@@ -606,9 +613,27 @@ dotnet run --project src/TicketDeskPro.Api
 
 Health check: `GET /health`
 
+## Deployment (Phase 8)
+
+$0 production: **Render** (Docker web service) → **Neon** Postgres → **Upstash** Redis · **Vercel** for the client · deploy hook fired by GitHub Actions after tests pass · UptimeRobot pings `/api/v1/health/healthz` every 5 min so the free instance never spins down.
+
+```mermaid
+flowchart LR
+    GH["GitHub main push"] --> CI["GitHub Actions: unit + integration tests"]
+    CI -->|green| HOOK["Render deploy hook"]
+    HOOK --> R["Render: ticketdeskpro-api<br/>(Docker, free tier)"]
+    V["Vercel: ticketdeskpro-client<br/>(auto-deploy on push)"] -->|JWT + CORS| R
+    R --> NEON[("Neon PostgreSQL<br/>(free, SSL)")]
+    R --> UP[("Upstash Redis<br/>(free, TLS)")]
+    R --> SMTP["SMTP (optional)"]
+    U["UptimeRobot /healthz<br/every 5 min"] --> R
+```
+
+Full step-by-step: `brain/06_DEPLOYMENT_GUIDE.md` (private).
+
 ## Seeded demo data
 
-All demo users share the password `Admin123!` (local development only):
+All demo users share the password `Admin123!`. Local dev always seeds them; production only when `SeedDemoUsers=true` (the live portfolio demo):
 
 | Email | Role |
 |---|---|
