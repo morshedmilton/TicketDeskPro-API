@@ -568,8 +568,8 @@ public class TicketApiTests : IClassFixture<TicketApiFactory>
     public async Task Health_endpoints_behave()
     {
         var anon = _factory.CreateClient();
-        Assert.Equal(HttpStatusCode.OK, (await anon.GetAsync("/api/v1/healthz")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await anon.GetAsync("/api/v1/health/healthz")).StatusCode);
         // InMemory + no Redis: readiness must report degraded (503)
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await anon.GetAsync("/api/v1/readyz")).StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await anon.GetAsync("/api/v1/health/readyz")).StatusCode);
     }
 }
