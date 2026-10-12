@@ -26,7 +26,12 @@ public class TicketApiFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseEnvironment("Development"); // loads appsettings.Development.json (JWT secret)
+        builder.UseEnvironment("Development"); // dev-only behaviors (demo-user seed gate)
+
+        // Hermetic: appsettings.Development.json is gitignored, so CI runners have no JWT
+        // secret and the factory must not depend on ambient machine state.
+        builder.UseSetting("JwtSettings:Secret",
+            "integration-test-signing-key-0123456789abcdef0123456789abcdef0123456789abcdef");
 
         builder.ConfigureServices(services =>
         {
