@@ -1,0 +1,10 @@
+.git
+brain/
+**/bin/
+**/obj/
+**/logs/
+**/uploads/
+tests/
+docker-compose.yml
+.env
+*.md
