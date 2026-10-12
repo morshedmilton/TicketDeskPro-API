@@ -599,6 +599,7 @@ public class TicketService : ITicketService
         t.CategoryId, t.Category.Name,
         t.CreatedById, t.CreatedBy.FirstName + " " + t.CreatedBy.LastName,
         t.AssignedToId, t.AssignedTo is null ? null : t.AssignedTo.FirstName + " " + t.AssignedTo.LastName,
+        t.Xmin,
         t.CreatedAt, t.UpdatedAt);
 
     private TicketDetailDto ToDetail(Ticket t) => new(
