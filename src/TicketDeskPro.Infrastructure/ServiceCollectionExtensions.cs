@@ -43,13 +43,15 @@ public static class ServiceCollectionExtensions
 
         // --- Redis (abortConnect=false: start even if Redis is down; per-request
         //     failures surface as SYS_002 from the rate limiter instead of crashing startup) ---
+        // Parse() instead of a bare endpoint so production strings can carry
+        // "host:6379,ssl=true,password=…" (Upstash) while plain "localhost:6379" still works.
         var redisConnectionString = configuration.GetSection("RedisSettings")["ConnectionString"] ?? "localhost:6379";
         services.AddSingleton<IConnectionMultiplexer>(_ =>
-            ConnectionMultiplexer.Connect(new ConfigurationOptions
-            {
-                EndPoints = { redisConnectionString },
-                AbortOnConnectFail = false
-            }));
+        {
+            var options = ConfigurationOptions.Parse(redisConnectionString);
+            options.AbortOnConnectFail = false;
+            return ConnectionMultiplexer.Connect(options);
+        });
 
         // --- Repositories & unit of work ---
         services.AddScoped<IUnitOfWork, UnitOfWork>();
