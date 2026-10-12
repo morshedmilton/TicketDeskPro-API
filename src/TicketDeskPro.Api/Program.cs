@@ -106,24 +106,28 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
-// --- Database: migrate + seed on startup (replaced by explicit step in the Render pipeline, Phase 8) ---
+// --- Database: migrate + seed on startup (works on Render too — no manual step) ---
+// Demo users are still opt-in: Development by default, or SeedDemoUsers=true in the
+// environment (the live portfolio demo needs known credentials; audit rule stays
+// "never implicitly in production").
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     if (db.Database.IsRelational()) // integration tests swap in InMemory, which has no migrations
         await db.Database.MigrateAsync();
-    await DbSeeder.SeedAsync(db, includeDemoUsers: app.Environment.IsDevelopment());
+    await DbSeeder.SeedAsync(
+        db,
+        includeDemoUsers: app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("SeedDemoUsers"));
 }
 
 // --- Pipeline (order matters: correlation first so even errors carry the id) ---
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+// Swagger is documentation only (every data endpoint still requires JWT), so it stays
+// up in production — the live demo's "check the API" story needs it (Phase 8).
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.UseCors("frontend");
 app.UseAuthentication();
