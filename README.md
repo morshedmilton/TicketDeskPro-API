@@ -362,7 +362,7 @@ sequenceDiagram
 
 ### 🏥 Liveness vs Readiness (Phase 5)
 
-Two probes, two questions: `/healthz` = "is the process alive?" (touches nothing). `/readyz` = "can it serve?" (pings PostgreSQL + Redis, answers 503 degraded when either is down). Plus structured logging: Serilog writes console + daily rolling files with the `CorrelationId` on every line.
+Two probes, two questions: `/healthz` = "is the process alive?" (touches nothing). `/readyz` = "can it serve?" (pings PostgreSQL + Redis, answers 503 degraded when either is down). The full paths are **`/api/v1/health/healthz`** and **`/api/v1/health/readyz`** — Render's deploy health check and UptimeRobot probe the first one, so treat it as a stable contract (a wrong path 404s and turns every deploy into a 15-minute timeout). Plus structured logging: Serilog writes console + daily rolling files with the `CorrelationId` on every line.
 
 ```mermaid
 flowchart LR
