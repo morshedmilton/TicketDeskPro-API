@@ -586,7 +586,7 @@ erDiagram
 | 4 | SLA engine + notifications (Outbox, SignalR) | ✅ Shipped |
 | 5 | Dashboards & analytics (Redis KPIs, admin panel, health checks) | ✅ Shipped — backend complete |
 | 6 | Frontend auth & layout (`TicketDeskPro-Client`) | ✅ Shipped |
-| 7 | Frontend tickets & dashboard UI | ⬜ |
+| 7 | Frontend tickets & dashboard UI | ✅ Shipped |
 | 8 | Production deployment (Render + Vercel, CI/CD) | ⬜ |
 
 ## Prerequisites
