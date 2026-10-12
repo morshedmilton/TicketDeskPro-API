@@ -13,8 +13,10 @@ COPY --from=build /out .
 # the runtime image runs as the non-root "app" user, so it needs ownership.
 RUN mkdir -p /app/logs /app/uploads && chown -R $APP_UID /app
 
-ENV ASPNETCORE_URLS=http://0.0.0.0:8080
-EXPOSE 8080
+# Render's internal health check and default traffic port are 10000 (PORT default),
+# so the app binds there — anything else times out the deploy.
+ENV ASPNETCORE_URLS=http://0.0.0.0:10000
+EXPOSE 10000
 USER $APP_UID
 
 ENTRYPOINT ["dotnet", "TicketDeskPro.Api.dll"]
