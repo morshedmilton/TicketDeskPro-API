@@ -38,6 +38,7 @@ public record TicketSummaryDto(
     string CreatedByName,
     Guid? AssignedToId,
     string? AssignedToName,
+    uint Etag,
     DateTime CreatedAt,
     DateTime UpdatedAt);
 
