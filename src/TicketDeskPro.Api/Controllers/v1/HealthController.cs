@@ -11,7 +11,10 @@ namespace TicketDeskPro.Api.Controllers.V1;
 /// /readyz  = "dependencies answer" (DB + Redis) — 503 when not ready.
 /// </summary>
 [ApiController]
-[Route("api/v1")]
+// "api/v1/health" (not "api/v1"): the documented probe paths are
+// /api/v1/health/healthz and /api/v1/health/readyz — Render's health check,
+// UptimeRobot and the README all use them; "api/v1" 404'd and timed out deploys.
+[Route("api/v1/health")]
 [AllowAnonymous]
 public class HealthController : ControllerBase
 {
