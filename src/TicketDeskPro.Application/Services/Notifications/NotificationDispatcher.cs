@@ -114,7 +114,7 @@ public class NotificationDispatcher :
         else if (e.AssignedToId is null)
         {
             // Unassigned: ping the whole active agent pool so someone picks it up.
-            foreach (var agent in await _users.GetActiveAgentsByLoadAsync(ct))
+            foreach (var agent in await _users.GetActiveAgentsByLoadAsync(ct: ct))
                 recipients.Add(agent.Id);
         }
 
