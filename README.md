@@ -50,7 +50,7 @@ sequenceDiagram
             API->>API: BCrypt verify password
             API->>DB: store login attempt (success)
             API->>R: reset counter
-            API-->>C: 200 accessToken (15 min) + refreshToken (7 days)
+            API-->>C: 200 accessToken (15 min) + refreshToken as HttpOnly cookie (7 days)
         else invalid
             API->>DB: store login attempt (failed)
             API-->>C: 401 generic "Invalid email or password"
@@ -68,7 +68,7 @@ sequenceDiagram
     participant API as Auth API
     participant DB as PostgreSQL
 
-    C->>API: POST /auth/refresh (old refreshToken)
+    C->>API: POST /auth/refresh (HttpOnly cookie rides along)
     API->>DB: look up token by SHA-256 hash
     alt token already used (revoked)
         DB-->>API: revoked token found
@@ -82,7 +82,7 @@ sequenceDiagram
         alt rotation lost a race
             API-->>C: 401 invalid token state
         else rotation won
-            API-->>C: 200 new accessToken + new refreshToken
+            API-->>C: 200 new accessToken + rotated HttpOnly cookie
         end
     end
 ```
