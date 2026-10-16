@@ -4,10 +4,6 @@ public record RegisterRequest(string Email, string Password, string FirstName, s
 
 public record LoginRequest(string Email, string Password);
 
-public record RefreshRequest(string RefreshToken);
-
-public record RevokeRequest(string RefreshToken);
-
 public record ForgotPasswordRequest(string Email);
 
 public record ResetPasswordRequest(string Token, string NewPassword);
@@ -16,7 +12,13 @@ public record UpdateProfileRequest(string FirstName, string LastName, string? Ph
 
 public record AuthUserDto(Guid Id, string Email, string FirstName, string LastName, IReadOnlyList<string> Roles);
 
-public record AuthResponse(string AccessToken, string RefreshToken, AuthUserDto User);
+public record AuthResponse(
+    string AccessToken,
+    // Cookie-only transport: XSS can never read the refresh token from JSON.
+    // Stays a property for the service layer/unit tests; the controller ships
+    // it in an HttpOnly Set-Cookie header instead.
+    [property: System.Text.Json.Serialization.JsonIgnore] string RefreshToken,
+    AuthUserDto User);
 
 public record RegisterResponse(Guid UserId, string Message);
 
