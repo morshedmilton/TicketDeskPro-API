@@ -6,7 +6,7 @@ using TicketDeskPro.Shared.Exceptions;
 namespace TicketDeskPro.Infrastructure.Services;
 
 /// <summary>
-/// Sliding window in Redis: one sorted set per (IP, email), scores are unix-ms timestamps.
+/// Sliding window in Redis: one sorted set per email, scores are unix-ms timestamps.
 /// The whole check runs as ONE Lua script so concurrent requests cannot race past the limit
 /// (trim + count + add must be atomic). Fail closed: any Redis failure blocks login (SYS_002).
 /// </summary>
@@ -81,5 +81,11 @@ public class RedisLoginRateLimiter : ILoginRateLimiter
     }
 
     private static string BuildKey(string ipAddress, string email) =>
-        $"rl:login:{ipAddress}:{email.ToLowerInvariant()}";
+        // Email-only: behind Render's TLS-terminating proxy every client shares
+        // the router IP, so an IP component would lump ALL users into one window
+        // (and X-Forwarded-For stays untrusted — spoofable). Cost: anyone can
+        // fill a victim's 5-minute window; that trade-off is standard when the
+        // edge hides real client IPs. Upgrade path: a platform-verified client
+        // IP, then key on (ip, email) again.
+        $"rl:login:{email.ToLowerInvariant()}";
 }
