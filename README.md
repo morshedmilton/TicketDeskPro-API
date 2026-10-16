@@ -4,6 +4,7 @@
 ![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1)
 ![License](https://img.shields.io/badge/license-private-lightgrey)
+[![Live](https://img.shields.io/badge/live-demo-00C853)](https://ticketdeskpro-api.onrender.com)
 
 Enterprise Support Ticketing & SLA Platform — backend API built with **ASP.NET Core 10**, **EF Core 10**, **PostgreSQL**, **Redis** and **SignalR**.
 
@@ -11,9 +12,9 @@ Enterprise Support Ticketing & SLA Platform — backend API built with **ASP.NET
 
 ## Architecture
 
-Clean Architecture, five layers (see `brain/03_FRD.md`):
+Clean Architecture, five layers (FRD, private):
 
-```
+```text
 src/
 ├── TicketDeskPro.Api            # Controllers, Hubs, middleware, pipeline
 ├── TicketDeskPro.Application    # Services, DTOs, validators, mappings
@@ -28,7 +29,7 @@ Every module ships with a simple diagram so a reader understands it at a glance.
 
 ### 🔐 Authentication (Phase 2)
 
-Login with email + password. Rate-limited per (IP, email) via a Redis sliding window, account locks after 5 failed attempts, and the response never reveals whether an email exists.
+Login with email + password. Rate-limited per email — 10 attempts per 5-minute Redis sliding window, fail-closed (a Redis outage blocks login with `SYS_002` instead of falling open) — because behind Render's proxy all clients share the router IP and `X-Forwarded-For` is intentionally untrusted. Account locks after 5 failed attempts, and the response never reveals whether an email exists.
 
 ```mermaid
 sequenceDiagram
@@ -38,7 +39,7 @@ sequenceDiagram
     participant DB as PostgreSQL
 
     C->>API: POST /auth/login (email, password)
-    API->>R: sliding-window check (IP + email)
+    API->>R: sliding-window check (10 per 5 min, per email)
     alt limit exceeded
         R-->>API: window full
         API-->>C: 429 Too Many Requests
@@ -86,6 +87,15 @@ sequenceDiagram
         end
     end
 ```
+
+### 🔒 Security Hardening
+
+The refresh token never touches JavaScript or a JSON body: it rides the `tdp_refresh` cookie — `HttpOnly + Secure + SameSite=None + Partitioned (CHIPS) + Path=/api/v1/auth` in production (plain-HTTP local dev gets a `SameSite=Lax` cookie instead, same-site by nature) — and refresh/revoke are body-less, so there is nothing to steal from a response payload. Around those endpoints:
+
+- **Origin guard (`SEC_001`)** — login, refresh and revoke reject any browser request whose `Origin` is neither `FRONTEND_URL` nor the API itself with `403 SEC_001`. Non-browser clients send no `Origin` (and cannot carry cookies), so they pass.
+- **Proxy-aware HTTPS** — `ForwardedHeaders` honors `X-Forwarded-Proto` (Render terminates TLS, so the `Secure` cookie sticks); `X-Forwarded-For` is deliberately NOT trusted, since it is spoofable.
+- **Login rate limiter** — 10 attempts per 5-minute sliding window per email, fail-closed: a Redis outage blocks login with `SYS_002` rather than letting attempts through.
+- **JWT secret fail-fast** — startup refuses to run with fewer than 32 characters.
 
 ### 🔑 Password Reset (Phase 2)
 
@@ -136,7 +146,7 @@ flowchart LR
 
 ### 🎫 Ticket Lifecycle (Phase 3)
 
-A 7-state workflow enforced by a server-side state machine — invalid jumps return `409`. An Admin may force-close from **any** state (BR-018, dashed), and a resolved ticket auto-closes after 48h once the Phase 4 job lands.
+A 7-state workflow enforced by a server-side state machine — invalid jumps return `409`. An Admin may force-close from **any** state (BR-018, dashed), and a resolved ticket auto-closes after 48h (Phase 4 job, shipped).
 
 ```mermaid
 flowchart LR
@@ -205,7 +215,7 @@ flowchart TD
 
 ### 📎 File Attachments (Phase 3)
 
-Uploads pass a strict gate before touching disk: safe extension list, 5MB cap, 5 files per ticket. Storage paths are sanitized against traversal attacks.
+Uploads pass a strict gate before storage: safe extension list, 5MB cap, 5 files per ticket, paths sanitized against traversal. Bytes then flow through `IFileStorageService` — signed HTTPS upload to Cloudinary when `Cloudinary:CloudName` is set (production; Render's free disk is ephemeral), local-disk fallback otherwise (dev and tests). Downloads always stream through the API, so the frontend is unchanged either way, and `DeleteAsync` is idempotent.
 
 ```mermaid
 flowchart TD
@@ -215,7 +225,7 @@ flowchart TD
     SIZE -->|"No"| REJ422["422 validation error"]
     SIZE -->|"Yes"| COUNT{"Ticket already has<br/>5 attachments?"}
     COUNT -->|"Yes"| REJ409b["409 CPL_006"]
-    COUNT -->|"No"| STORE["Stored as<br/>uploads/tickets/{id}/{guid}_{name}"]
+    COUNT -->|"No"| STORE["IFileStorageService:<br/>Cloudinary or local disk"]
     STORE --> OK201["201 attachment id"]
 
     classDef bad fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D
@@ -328,7 +338,7 @@ flowchart LR
     class H1,H2,GUARD good
 ```
 
-Also in this phase: **manual ticket assignment** (`POST /tickets/{id}/assign`, claim-to-InProgress), **round-robin auto-assignment** to the least-loaded active agent on creation, and **SignalR hub** at `/hubs/notifications` (JWT via header or `?access_token=`).
+Also in this phase: **manual ticket assignment** (`POST /tickets/{id}/assign`, claim-to-InProgress), **category-aware auto-assignment** on creation — fewest open tickets in the ticket's category first, then fewest overall, then seniority (CreatedAt), so each category spreads evenly while specialists and overflow both work — and **SignalR hub** at `/hubs/notifications` (JWT via header or `?access_token=`).
 
 ### 📊 Dashboard & Redis Cache-Aside (Phase 5)
 
@@ -611,11 +621,48 @@ docker compose up -d
 dotnet run --project src/TicketDeskPro.Api
 ```
 
-Health check: `GET /health`
+Health check: `GET /api/v1/health/healthz` — the exact path Render's deploy check and UptimeRobot probe (the bare `/health` survives only as a legacy alias).
+
+## Environment variables
+
+Every key the API reads, all documented in `.env.example` (copy it to `.env` for docker compose; on Render, set them in the service's Environment tab). Optional keys have safe local defaults.
+
+| Variable | Purpose | Example / default |
+|---|---|---|
+| `ConnectionStrings__DefaultConnection` | PostgreSQL connection string | `Host=localhost;Port=5432;Database=TicketDesk;Username=postgres;Password=CHANGE_ME` — prod: Neon pooled endpoint with `Ssl Mode=Require` |
+| `JwtSettings__Secret` | JWT signing key — **at least 32 chars**, validated at startup | `YOUR_SUPER_SECRET_KEY_AT_LEAST_32_CHARS` (generate with `openssl rand -hex 32`) |
+| `JwtSettings__Issuer` | JWT issuer | `TicketDeskPro` |
+| `JwtSettings__Audience` | JWT audience | `TicketDeskProClient` |
+| `JwtSettings__AccessTokenMinutes` | Access-token lifetime | `15` |
+| `JwtSettings__RefreshTokenDays` | Refresh-token and cookie lifetime | `7` |
+| `RedisSettings__ConnectionString` | Redis — login rate limiter + KPI cache | `localhost:6379` — prod: Upstash `xxx.upstash.io:6379,ssl=true,password=xxx` |
+| `FRONTEND_URL` | Exact frontend origin, no trailing slash — feeds CORS, the `SEC_001` origin guard, and email links | `http://localhost:3000` — prod: `https://your-app.vercel.app` |
+| `EmailSettings__ApiKey` | Brevo API key — mail goes over the HTTPS API because Render free blocks SMTP ports 25/465/587 | `key_xxxxx` |
+| `EmailSettings__FromAddress` | Verified Brevo sender address | `your verified email` |
+| `EmailSettings__FromName` | Sender display name | `TicketDesk Pro` |
+| `Cloudinary__CloudName` | Cloudinary cloud — signed attachment uploads to the cloud; unset falls back to local disk | `your-cloud-name` (optional) |
+| `Cloudinary__ApiKey` | Cloudinary API key | `your-api-key` (optional) |
+| `Cloudinary__ApiSecret` | Cloudinary API secret | `your-api-secret` (optional) |
+| `Storage__RootPath` | Attachment root for the local-disk fallback | `/app/uploads` (optional) |
+| `SeedDemoUsers` | Seed the four demo users (`Admin123!`); leave unset on a private instance | `true` (optional) |
+| `Serilog__WriteTo__1__Args__path` | Rolling log-file path (containers) | `/data/logs/log-.txt` (optional) |
+
+## Testing
+
+77 tests — **44 unit** + **33 integration** — run with:
+
+```bash
+dotnet test
+```
+
+| Project | Test classes |
+|---|---|
+| `tests/TicketDeskPro.UnitTests` | `AuthServiceTests`, `SecurityServiceTests`, `TicketStateMachineTests`, `BrevoEmailServiceTests`, `CloudinaryFileStorageServiceTests` |
+| `tests/TicketDeskPro.IntegrationTests` | `TicketApiTests`, `AuthCookieTests`, `AssignmentTests`, `CorsTests` |
 
 ## Deployment (Phase 8)
 
-$0 production: **Render** (Docker web service) → **Neon** Postgres → **Upstash** Redis · **Vercel** for the client · deploy hook fired by GitHub Actions after tests pass · UptimeRobot pings `/api/v1/health/healthz` every 5 min so the free instance never spins down.
+$0 production: **Render** (Docker web service) → **Neon** Postgres → **Upstash** Redis · **Vercel** for the client · deploy hook fired by GitHub Actions after tests pass · UptimeRobot pings `/api/v1/health/healthz` every 5 min so the free instance never spins down. CORS is credentialed and pinned to the exact `FRONTEND_URL` origin — the `SEC_001` origin guard re-checks it on login/refresh/revoke.
 
 ```mermaid
 flowchart LR
@@ -626,7 +673,8 @@ flowchart LR
     R --> NEON[("Neon PostgreSQL<br/>(free, SSL)")]
     R --> UP[("Upstash Redis<br/>(free, TLS)")]
     R --> MAIL["Brevo HTTPS API (optional, email)"]
-    U["UptimeRobot /healthz<br/every 5 min"] --> R
+    R --> CLOUD["Cloudinary API (optional, attachments)"]
+    U["UptimeRobot /healthz<br/>every 5 min"] --> R
 ```
 
 Full step-by-step: `brain/06_DEPLOYMENT_GUIDE.md` (private).
