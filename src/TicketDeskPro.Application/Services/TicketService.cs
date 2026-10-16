@@ -145,10 +145,12 @@ public class TicketService : ITicketService
             };
         }
 
-        // US-6.02 round-robin: hand the ticket to the least-loaded active agent.
+        // US-6.02 category-aware round-robin: hand the ticket to the active agent
+        // with the FEWEST open tickets IN THIS CATEGORY (spreads each category
+        // evenly across agents), ties broken by overall load then seniority.
         // FK scalar only — the pool query is AsNoTracking, so setting the navigation
         // would make EF try to INSERT the already-existing user row.
-        var agentPool = await _users.GetActiveAgentsByLoadAsync(ct);
+        var agentPool = await _users.GetActiveAgentsByLoadAsync(ticket.CategoryId, ct);
         var assignedAgent = agentPool.FirstOrDefault();
         if (assignedAgent is not null)
             ticket.AssignedToId = assignedAgent.Id;
