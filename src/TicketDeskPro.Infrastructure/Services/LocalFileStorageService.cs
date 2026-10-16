@@ -41,11 +41,12 @@ public class LocalFileStorageService : IFileStorageService
         return Task.FromResult((stream, storedPath));
     }
 
-    public void Delete(string storedPath)
+    public Task DeleteAsync(string storedPath, CancellationToken ct = default)
     {
         var fullPath = ResolveSafe(storedPath);
         if (File.Exists(fullPath))
             File.Delete(fullPath);
+        return Task.CompletedTask;
     }
 
     /// <summary>Path traversal guard: the stored path must stay under the root, always.</summary>
