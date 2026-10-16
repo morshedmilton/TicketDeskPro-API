@@ -19,8 +19,10 @@ public interface IUserRepository
     Task<bool> AnyByEmailAsync(string email, CancellationToken ct = default);
     Task<User?> GetByPasswordResetHashAsync(string tokenHash, CancellationToken ct = default);
     Task AddAsync(User user, CancellationToken ct = default);
-    /// <summary>Active users holding the Agent role (assignment pool), ordered by open-ticket load.</summary>
-    Task<IReadOnlyList<User>> GetActiveAgentsByLoadAsync(CancellationToken ct = default);
+    /// <summary>Active users holding the Agent role (assignment pool). With a categoryId,
+    /// agents least-loaded IN THAT CATEGORY come first (US-6.02 category-aware
+    /// round-robin); ties fall back to overall open-ticket load, then seniority.</summary>
+    Task<IReadOnlyList<User>> GetActiveAgentsByLoadAsync(Guid? categoryId = null, CancellationToken ct = default);
     Task<IReadOnlyList<User>> GetActiveByRoleAsync(string roleName, CancellationToken ct = default);
     Task<NotificationPreference?> GetNotificationPreferenceAsync(Guid userId, CancellationToken ct = default);
     Task<NotificationPreference?> GetNotificationPreferenceTrackedAsync(Guid userId, CancellationToken ct = default);
