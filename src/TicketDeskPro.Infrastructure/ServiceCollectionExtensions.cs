@@ -78,7 +78,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ITokenService, TokenService>();
         services.AddScoped<IPasswordHasher, BcryptPasswordHasher>();
         services.AddScoped<ILoginRateLimiter, RedisLoginRateLimiter>();
-        services.AddScoped<IFileStorageService, LocalFileStorageService>();
+        // Attachments: Cloudinary when configured (production — Render's free disk
+        // is ephemeral); local disk for dev and the integration tests.
+        if (!string.IsNullOrWhiteSpace(configuration["Cloudinary:CloudName"]))
+            services.AddScoped<IFileStorageService, CloudinaryFileStorageService>();
+        else
+            services.AddScoped<IFileStorageService, LocalFileStorageService>();
 
         // --- Notifications & background jobs (Phase 4) ---
         // Brevo HTTPS API — Render free tier blocks outbound SMTP (25/465/587).
