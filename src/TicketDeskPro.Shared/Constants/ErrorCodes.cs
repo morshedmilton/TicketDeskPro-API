@@ -27,6 +27,7 @@ public static class ErrorCodes
     public const string SelfActionForbidden = "CPL_008";
     public const string SystemRoleLocked = "CPL_009";
     public const string ReferencedEntity = "CPL_010";
+    public const string CsrfOriginRejected = "SEC_001";
     public const string AuthRateLimited = "RAT_001";
     public const string ApiRateLimited = "RAT_002";
     public const string DatabaseTimeout = "SYS_001";
