@@ -72,10 +72,10 @@ public class OutboxProcessorJob : BackgroundService
         var due = await outbox.GetDuePendingAsync(now, BatchSize, ct);
         if (due.Count == 0) return;
 
-        // Dev convenience: no SMTP host configured → park without burning attempts.
-        if (string.IsNullOrWhiteSpace(_configuration.GetSection("SmtpSettings")?["Host"]))
+        // Dev convenience: no email API key configured → park without burning attempts.
+        if (string.IsNullOrWhiteSpace(_configuration.GetSection("EmailSettings")?["ApiKey"]))
         {
-            _logger.LogWarning("SmtpSettings:Host not configured — {Count} outbox email(s) held as Pending", due.Count);
+            _logger.LogWarning("EmailSettings:ApiKey not configured — {Count} outbox email(s) held as Pending", due.Count);
             return;
         }
 
