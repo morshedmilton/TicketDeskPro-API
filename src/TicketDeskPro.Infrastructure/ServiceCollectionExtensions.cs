@@ -81,7 +81,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
 
         // --- Notifications & background jobs (Phase 4) ---
-        services.AddScoped<IEmailService, SmtpEmailService>();
+        // Brevo HTTPS API — Render free tier blocks outbound SMTP (25/465/587).
+        services.AddScoped<IEmailService, BrevoEmailService>();
         services.AddScoped<IDomainEventDispatcher, DomainEventDispatcher>(); // scoped: handlers are scoped
         services.AddHostedService<BackgroundJobs.OutboxProcessorJob>();
         services.AddHostedService<BackgroundJobs.SlaCheckerJob>();
