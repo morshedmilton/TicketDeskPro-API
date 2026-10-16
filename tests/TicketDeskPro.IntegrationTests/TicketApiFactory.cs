@@ -32,6 +32,9 @@ public class TicketApiFactory : WebApplicationFactory<Program>
         // secret and the factory must not depend on ambient machine state.
         builder.UseSetting("JwtSettings:Secret",
             "integration-test-signing-key-0123456789abcdef0123456789abcdef0123456789abcdef");
+        // CorsTests asserts against this exact origin; pin it so ambient FRONTEND_URL
+        // (or a future Cloudinary__* env var leaking into DI) cannot flip the policy.
+        builder.UseSetting("FRONTEND_URL", "http://localhost:3000");
 
         builder.ConfigureServices(services =>
         {
@@ -51,6 +54,10 @@ public class TicketApiFactory : WebApplicationFactory<Program>
             services.AddSingleton<ILoginRateLimiter, NoOpRateLimiter>();
             services.RemoveAll(typeof(ICacheService));
             services.AddSingleton<ICacheService, NoOpCacheService>();
+
+            // Always local disk in tests, even if the machine has Cloudinary__* env vars.
+            services.RemoveAll(typeof(IFileStorageService));
+            services.AddScoped<IFileStorageService, LocalFileStorageService>();
         });
 
         builder.UseSetting("Storage:RootPath", StorageRoot);
