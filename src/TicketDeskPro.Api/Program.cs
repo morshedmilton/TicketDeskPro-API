@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
@@ -120,7 +121,17 @@ using (var scope = app.Services.CreateScope())
         includeDemoUsers: app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("SeedDemoUsers"));
 }
 
-// --- Pipeline (order matters: correlation first so even errors carry the id) ---
+// --- Pipeline (order matters: proxies first so scheme-based logic sees the truth) ---
+// Render terminates TLS in front of us and forwards plain http:// — honor
+// X-Forwarded-Proto so Request.IsHttps (Secure refresh cookie) is correct.
+// ONLY the proto is honored: X-Forwarded-For stays untrusted so clients cannot
+// spoof the login rate-limiter's IP. Clear proxy lists because Render's router
+// IPs are not statically known.
+var forwarded = new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedProto };
+forwarded.KnownIPNetworks.Clear();
+forwarded.KnownProxies.Clear();
+app.UseForwardedHeaders(forwarded);
+
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
