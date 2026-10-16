@@ -35,14 +35,27 @@ public class EfUserRepository : IUserRepository
     public async Task AddAsync(User user, CancellationToken ct = default) =>
         await _db.Users.AddAsync(user, ct);
 
-    public async Task<IReadOnlyList<User>> GetActiveAgentsByLoadAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<User>> GetActiveAgentsByLoadAsync(Guid? categoryId = null, CancellationToken ct = default)
     {
         var agentRole = _db.Roles.First(r => r.Name == "Agent").Id;
+        // Open = not Closed (same definition the assignment pool always used).
         return await _db.Users.AsNoTracking()
             .Where(u => u.IsActive && u.UserRoles.Any(ur => ur.RoleId == agentRole))
-            .Select(u => new { User = u, OpenTickets = _db.Tickets.Count(t => t.AssignedToId == u.Id && t.Status != Domain.Enums.TicketStatus.Closed) })
-            .OrderBy(x => x.OpenTickets)          // least-loaded first = round-robin feel
-            .ThenBy(x => x.User.CreatedAt)
+            .Select(u => new
+            {
+                User = u,
+                // Category-aware first: spread each category's work evenly —
+                // the agent with the FEWEST open tickets in this category wins.
+                // Written without a conditional so Npgsql translates it for sure;
+                // a null categoryId simply never matches an FK, giving everyone 0.
+                CategoryOpen = _db.Tickets.Count(t => t.AssignedToId == u.Id
+                                                  && t.CategoryId == categoryId
+                                                  && t.Status != Domain.Enums.TicketStatus.Closed),
+                OpenTickets = _db.Tickets.Count(t => t.AssignedToId == u.Id && t.Status != Domain.Enums.TicketStatus.Closed)
+            })
+            .OrderBy(x => x.CategoryOpen)         // category load decides…
+            .ThenBy(x => x.OpenTickets)           // …then overall load…
+            .ThenBy(x => x.User.CreatedAt)        // …then seniority (stable, fair)
             .Select(x => x.User)
             .Take(50)
             .ToListAsync(ct);
