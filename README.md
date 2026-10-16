@@ -250,14 +250,14 @@ sequenceDiagram
 
 ### 📮 Outbox Pattern — Guaranteed Email Delivery (Phase 4)
 
-Emails are never written directly to SMTP inside a request. The email row is committed **in the same transaction** as the business change; a background worker sends it with retries. If SMTP dies, no email is lost — it waits.
+Emails are never written directly inside a request. The email row is committed **in the same transaction** as the business change; a background worker sends it with retries over Brevo's HTTPS API (Render free blocks outbound SMTP ports). If the email API dies, no email is lost — it waits.
 
 ```mermaid
 sequenceDiagram
     participant API as Business code
     participant DB as PostgreSQL
     participant J as Outbox Worker (10s)
-    participant SMTP as Email provider
+    participant BR as Brevo HTTPS API
 
     Note over API,DB: Transaction 1 — atomic, email cannot be lost
     API->>DB: UPDATE ticket + INSERT EmailOutbox (Pending)
@@ -265,15 +265,15 @@ sequenceDiagram
 
     loop every 10 seconds
         J->>DB: pick due Pending rows (NextAttemptAt <= now)
-        alt SMTP configured
-            J->>SMTP: send email
+        alt EmailSettings:ApiKey configured
+            J->>BR: POST /v3/smtp/email (port 443)
             alt sent
                 DB-->>J: mark Sent
             else failed
                 J->>DB: attempts++, backoff 2^attempts minutes
                 note right of J: after 3 attempts -> Failed (dead letter)
             end
-        else SMTP not configured (dev)
+        else no API key (dev)
             J->>J: hold rows as Pending, log warning
         end
     end
@@ -625,7 +625,7 @@ flowchart LR
     V["Vercel: ticketdeskpro-client<br/>(auto-deploy on push)"] -->|JWT + CORS| R
     R --> NEON[("Neon PostgreSQL<br/>(free, SSL)")]
     R --> UP[("Upstash Redis<br/>(free, TLS)")]
-    R --> SMTP["SMTP (optional)"]
+    R --> MAIL["Brevo HTTPS API (optional, email)"]
     U["UptimeRobot /healthz<br/every 5 min"] --> R
 ```
 
