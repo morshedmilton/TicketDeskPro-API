@@ -116,9 +116,15 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     if (db.Database.IsRelational()) // integration tests swap in InMemory, which has no migrations
         await db.Database.MigrateAsync();
-    await DbSeeder.SeedAsync(
-        db,
-        includeDemoUsers: app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("SeedDemoUsers"));
+    var seedDemoUsers = app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("SeedDemoUsers");
+    if (seedDemoUsers && !app.Environment.IsDevelopment())
+    {
+        // Portfolio-demo intent, but the credentials are public — shout about it (BE-L2).
+        app.Logger.LogWarning(
+            "Demo users are being seeded in {Environment} with well-known public credentials. " +
+            "Unset SeedDemoUsers for a private production instance.", app.Environment);
+    }
+    await DbSeeder.SeedAsync(db, includeDemoUsers: seedDemoUsers);
 }
 
 // --- Pipeline (order matters: proxies first so scheme-based logic sees the truth) ---
