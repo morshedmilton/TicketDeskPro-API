@@ -100,6 +100,8 @@ public class TicketService : ITicketService
             throw new ForbiddenException(ErrorCodes.MissingPermission, "You do not have permission to perform this action."); // US-2.07: deleted view is admin-only
 
         var limit = Math.Clamp(query.Limit, 1, 100);
+        // Unbounded search strings turn the LIKE scan into a cheap DB-CPU lever (BE-L3).
+        if (query.Search is { Length: > 200 }) query = query with { Search = query.Search[..200] };
         var page = await _tickets.GetPageAsync(limit, query.Cursor, query.Search,
             query.Status is null ? null : (int)query.Status,
             query.Priority is null ? null : (int)query.Priority,

@@ -48,6 +48,8 @@ public class UserAdminService : IUserAdminService
 
     public async Task<UserPageDto> GetPageAsync(string? search, string? roleName, int limit, string? cursor, CancellationToken ct = default)
     {
+        // Unbounded search strings turn the LIKE scan into a cheap DB-CPU lever (BE-L3).
+        if (search is { Length: > 200 }) search = search[..200];
         var page = await _users.GetPageAsync(search, roleName, Math.Clamp(limit, 1, 100), cursor, ct);
         return new UserPageDto(page.Items.Select(ToDto).ToList(), page.NextCursor, page.HasMore);
     }
