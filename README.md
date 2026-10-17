@@ -94,7 +94,8 @@ The refresh token never touches JavaScript or a JSON body: it rides the `tdp_ref
 
 - **Origin guard (`SEC_001`)** — login, refresh and revoke reject any browser request whose `Origin` is neither `FRONTEND_URL` nor the API itself with `403 SEC_001`. Non-browser clients send no `Origin` (and cannot carry cookies), so they pass.
 - **Proxy-aware HTTPS** — `ForwardedHeaders` honors `X-Forwarded-Proto` (Render terminates TLS, so the `Secure` cookie sticks); `X-Forwarded-For` is deliberately NOT trusted, since it is spoofable.
-- **Login rate limiter** — 10 attempts per 5-minute sliding window per email, fail-closed: a Redis outage blocks login with `SYS_002` rather than letting attempts through.
+- **Login rate limiter** — 10 attempts per 5-minute sliding window per email, fail-closed: a Redis outage blocks login with `SYS_002` rather than letting attempts through. Register and forgot-password share the same limiter in their own per-email buckets (stops reset-email bombing and mass signups).
+- **Baseline security headers** — `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, strict referrer policy on every response. No CSP by design (Swagger UI's inline assets would break).
 - **JWT secret fail-fast** — startup refuses to run with fewer than 32 characters.
 
 ### 🔑 Password Reset (Phase 2)
@@ -215,7 +216,7 @@ flowchart TD
 
 ### 📎 File Attachments (Phase 3)
 
-Uploads pass a strict gate before storage: safe extension list, 5MB cap, 5 files per ticket, paths sanitized against traversal. Bytes then flow through `IFileStorageService` — signed HTTPS upload to Cloudinary when `Cloudinary:CloudName` is set (production; Render's free disk is ephemeral), local-disk fallback otherwise (dev and tests). Downloads always stream through the API, so the frontend is unchanged either way, and `DeleteAsync` is idempotent.
+Uploads pass a strict gate before storage: safe extension list, 5MB cap, 5 files per ticket, paths sanitized against traversal. Bytes then flow through `IFileStorageService` — signed HTTPS upload to Cloudinary when `Cloudinary:CloudName` is set (production; Render's free disk is ephemeral), local-disk fallback otherwise (dev and tests). Downloads always stream through the API with a **server-derived Content-Type** (mapped from the allowlisted extension — the client's header is ignored), so the frontend is unchanged either way, and `DeleteAsync` is idempotent.
 
 ```mermaid
 flowchart TD
@@ -649,7 +650,7 @@ Every key the API reads, all documented in `.env.example` (copy it to `.env` for
 
 ## Testing
 
-77 tests — **44 unit** + **33 integration** — run with:
+80 tests — **47 unit** + **33 integration** — run with:
 
 ```bash
 dotnet test
@@ -657,7 +658,7 @@ dotnet test
 
 | Project | Test classes |
 |---|---|
-| `tests/TicketDeskPro.UnitTests` | `AuthServiceTests`, `SecurityServiceTests`, `TicketStateMachineTests`, `BrevoEmailServiceTests`, `CloudinaryFileStorageServiceTests` |
+| `tests/TicketDeskPro.UnitTests` | `AuthServiceTests`, `AuthThrottleTests`, `SecurityServiceTests`, `TicketStateMachineTests`, `BrevoEmailServiceTests`, `CloudinaryFileStorageServiceTests` |
 | `tests/TicketDeskPro.IntegrationTests` | `TicketApiTests`, `AuthCookieTests`, `AssignmentTests`, `CorsTests` |
 
 ## Deployment (Phase 8)
