@@ -92,6 +92,9 @@ public class AuthService : IAuthService
         await _registerValidator.EnsureValidAsync(request, ct);
 
         var email = NormalizeEmail(request.Email);
+        // Bucketed throttle: unauthenticated mass registration would otherwise cost
+        // nothing but BCrypt work and DB rows (email-keyed, same window as login).
+        await _rateLimiter.CheckAsync("register", email, ct);
 
         if (await _users.AnyByEmailAsync(email, ct))
             throw new ConflictException(ErrorCodes.EmailExists, "A user with this email already exists.");
@@ -230,6 +233,10 @@ public class AuthService : IAuthService
         await _forgotPasswordValidator.ValidateAndThrowAsync(request, ct);
 
         var email = NormalizeEmail(request.Email);
+        // Bucketed throttle: without it anyone could flood a victim's inbox with
+        // reset emails and burn the whole Brevo free quota via the outbox worker.
+        await _rateLimiter.CheckAsync("forgot", email, ct);
+
         var user = await _users.GetByEmailWithRolesAsync(email, ct);
 
         if (user is not null)
