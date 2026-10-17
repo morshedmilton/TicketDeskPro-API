@@ -19,6 +19,18 @@ public class RequirePermissionAttribute : Attribute, IAuthorizationFilter
 
     public void OnAuthorization(AuthorizationFilterContext context)
     {
+        // Unauthenticated callers get 401 (missing/expired token), authenticated
+        // callers without the permission get 403 — the two cases stay distinguishable.
+        if (context.HttpContext.User.Identity?.IsAuthenticated != true)
+        {
+            var unauthEnvelope = ApiResponse<object>.Fail(
+                [new ApiError(ErrorCodes.InvalidTokenState, "Not authenticated.")],
+                CorrelationIdMiddleware.GetCorrelationId(context.HttpContext));
+
+            context.Result = new ObjectResult(unauthEnvelope) { StatusCode = StatusCodes.Status401Unauthorized };
+            return;
+        }
+
         var hasPermission = context.HttpContext.User
             .HasClaim(c => c.Type == "permissions" && c.Value == _permission);
 

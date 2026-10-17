@@ -116,9 +116,15 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     if (db.Database.IsRelational()) // integration tests swap in InMemory, which has no migrations
         await db.Database.MigrateAsync();
-    await DbSeeder.SeedAsync(
-        db,
-        includeDemoUsers: app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("SeedDemoUsers"));
+    var seedDemoUsers = app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("SeedDemoUsers");
+    if (seedDemoUsers && !app.Environment.IsDevelopment())
+    {
+        // Portfolio-demo intent, but the credentials are public — shout about it (BE-L2).
+        app.Logger.LogWarning(
+            "Demo users are being seeded in {Environment} with well-known public credentials. " +
+            "Unset SeedDemoUsers for a private production instance.", app.Environment);
+    }
+    await DbSeeder.SeedAsync(db, includeDemoUsers: seedDemoUsers);
 }
 
 // --- Pipeline (order matters: proxies first so scheme-based logic sees the truth) ---
@@ -131,6 +137,21 @@ var forwarded = new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeader
 forwarded.KnownIPNetworks.Clear();
 forwarded.KnownProxies.Clear();
 app.UseForwardedHeaders(forwarded);
+
+// Baseline security headers on every response (FE-H1). Deliberately no CSP:
+// Swagger UI's inline assets and generic JSON clients would break — revisit if
+// a strict frontend proxy ever fronts this API.
+app.Use(async (context, next) =>
+{
+    context.Response.OnStarting(() =>
+    {
+        context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+        context.Response.Headers.Append("X-Frame-Options", "DENY");
+        context.Response.Headers.Append("Referrer-Policy", "strict-origin-when-cross-origin");
+        return Task.CompletedTask;
+    });
+    await next();
+});
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<ExceptionHandlingMiddleware>();

@@ -93,5 +93,6 @@ public class NoOpCacheService : ICacheService
 public class NoOpRateLimiter : ILoginRateLimiter
 {
     public Task CheckAndRecordAsync(string ipAddress, string email, CancellationToken ct = default) => Task.CompletedTask;
+    public Task CheckAsync(string bucket, string email, CancellationToken ct = default) => Task.CompletedTask;
     public Task ResetAsync(string ipAddress, string email, CancellationToken ct = default) => Task.CompletedTask;
 }

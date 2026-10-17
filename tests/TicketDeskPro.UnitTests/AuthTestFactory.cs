@@ -105,11 +105,22 @@ public class FakeRateLimiter : ILoginRateLimiter
 {
     public bool ShouldLimit { get; set; }
     public int ResetCallCount { get; private set; }
+    public string? LastBucket { get; private set; }
+    public int CheckCallCount { get; private set; }
 
     public Task CheckAndRecordAsync(string ipAddress, string email, CancellationToken ct = default) =>
         ShouldLimit
             ? throw new TicketDeskPro.Shared.Exceptions.RateLimitedException(ErrorCodes.AuthRateLimited, "Too many login attempts. Try again later.")
             : Task.CompletedTask;
+
+    public Task CheckAsync(string bucket, string email, CancellationToken ct = default)
+    {
+        LastBucket = bucket;
+        CheckCallCount++;
+        if (ShouldLimit)
+            throw new TicketDeskPro.Shared.Exceptions.RateLimitedException(ErrorCodes.AuthRateLimited, "Too many attempts. Try again later.");
+        return Task.CompletedTask;
+    }
 
     public Task ResetAsync(string ipAddress, string email, CancellationToken ct = default)
     {

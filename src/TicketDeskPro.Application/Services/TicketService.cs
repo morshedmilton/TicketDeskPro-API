@@ -17,7 +17,22 @@ namespace TicketDeskPro.Application.Services;
 
 public class TicketService : ITicketService
 {
-    public const int MaxAttachmentsPerTicket = 5;      // BR-009
+    public const int MaxAttachmentsPerTicket = 5;
+
+    /// <summary>Server-side Content-Type for the allowlisted extensions — the client's
+    /// value is untrusted input (BE-L1).</summary>
+    private static string ExtensionContentType(string extension) => extension switch
+    {
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".png" => "image/png",
+        ".gif" => "image/gif",
+        ".pdf" => "application/pdf",
+        ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".txt" => "text/plain",
+        _ => "application/octet-stream"
+    };
+
     public const long MaxAttachmentBytes = 5 * 1024 * 1024; // BR-009
     public static readonly string[] AllowedAttachmentExtensions = [".jpg", ".png", ".gif", ".pdf", ".docx", ".xlsx", ".txt"]; // BR-010
 
@@ -86,6 +101,8 @@ public class TicketService : ITicketService
             throw new ForbiddenException(ErrorCodes.MissingPermission, "You do not have permission to perform this action."); // US-2.07: deleted view is admin-only
 
         var limit = Math.Clamp(query.Limit, 1, 100);
+        // Unbounded search strings turn the LIKE scan into a cheap DB-CPU lever (BE-L3).
+        if (query.Search is { Length: > 200 }) query = query with { Search = query.Search[..200] };
         var page = await _tickets.GetPageAsync(limit, query.Cursor, query.Search,
             query.Status is null ? null : (int)query.Status,
             query.Priority is null ? null : (int)query.Priority,
@@ -483,7 +500,10 @@ public class TicketService : ITicketService
             Ticket = ticket,
             FileName = safeName,
             StoredPath = storedPath,
-            ContentType = string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType,
+            // The client's Content-Type is untrusted — derive it server-side from the
+            // (already allowlisted) extension so a .txt uploaded as text/html is
+            // still served as text/plain (BE-L1).
+            ContentType = ExtensionContentType(extension),
             FileSizeBytes = content.CanSeek ? content.Length : 0,
             UploadedById = viewer.Id
         };

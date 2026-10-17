@@ -31,12 +31,15 @@ public class RedisLoginRateLimiter : ILoginRateLimiter
         return 1
         """;
 
-    public Task CheckAndRecordAsync(string ipAddress, string email, CancellationToken ct = default)
+    public Task CheckAndRecordAsync(string ipAddress, string email, CancellationToken ct = default) =>
+        CheckAsync("login", email, ct);
+
+    public Task CheckAsync(string bucket, string email, CancellationToken ct = default)
     {
         try
         {
             var db = _redis.GetDatabase();
-            var key = BuildKey(ipAddress, email);
+            var key = $"rl:{bucket}:{email.ToLowerInvariant()}";
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var windowStart = now - WindowMinutes * 60_000L;
 
@@ -72,20 +75,11 @@ public class RedisLoginRateLimiter : ILoginRateLimiter
     {
         try
         {
-            await _redis.GetDatabase().KeyDeleteAsync(BuildKey(ipAddress, email));
+            await _redis.GetDatabase().KeyDeleteAsync($"rl:login:{email.ToLowerInvariant()}");
         }
         catch (Exception)
         {
             // A failed reset only makes the window stricter — never block a successful login here.
         }
     }
-
-    private static string BuildKey(string ipAddress, string email) =>
-        // Email-only: behind Render's TLS-terminating proxy every client shares
-        // the router IP, so an IP component would lump ALL users into one window
-        // (and X-Forwarded-For stays untrusted — spoofable). Cost: anyone can
-        // fill a victim's 5-minute window; that trade-off is standard when the
-        // edge hides real client IPs. Upgrade path: a platform-verified client
-        // IP, then key on (ip, email) again.
-        $"rl:login:{email.ToLowerInvariant()}";
 }
