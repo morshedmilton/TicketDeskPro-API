@@ -31,7 +31,8 @@ public class TicketService : ITicketService
         ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         ".txt" => "text/plain",
         _ => "application/octet-stream"
-    };      // BR-009
+    };
+
     public const long MaxAttachmentBytes = 5 * 1024 * 1024; // BR-009
     public static readonly string[] AllowedAttachmentExtensions = [".jpg", ".png", ".gif", ".pdf", ".docx", ".xlsx", ".txt"]; // BR-010
 
