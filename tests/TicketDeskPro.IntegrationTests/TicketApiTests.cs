@@ -202,14 +202,18 @@ public class TicketApiTests : IClassFixture<TicketApiFactory>
         var client = await ClientForAsync("customer@ticketdesk.dev");
         var (id, _, _) = await CreateTicketAsync(client);
 
+        var spoofed = new ByteArrayContent("hello attachment"u8.ToArray());
+        spoofed.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/html"); // untrusted client value
         var form = new MultipartFormDataContent
         {
-            { new ByteArrayContent("hello attachment"u8.ToArray()), "file", "notes.txt" }
+            { spoofed, "file", "notes.txt" }
         };
         var upload = await client.PostAsync($"/api/v1/tickets/{id}/attachments", form);
         Assert.Equal(HttpStatusCode.Created, upload.StatusCode);
         var (attachment, _) = await ReadAsync(upload);
         var attachmentId = attachment.GetProperty("id").GetString()!;
+        // Server derives the content type from the allowlisted extension, not the client header (BE-L1).
+        Assert.Equal("text/plain", attachment.GetProperty("contentType").GetString());
 
         var download = await client.GetAsync($"/api/v1/tickets/{id}/attachments/{attachmentId}/download");
         Assert.Equal(HttpStatusCode.OK, download.StatusCode);
